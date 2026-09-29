@@ -16,6 +16,7 @@ interface HorizontalBarChartProps {
   emptyMessage?: string;
   barColor?: string;
   showRank?: boolean;
+  onBarClick?: (label: string) => void;
 }
 
 export default function HorizontalBarChart({
@@ -26,6 +27,7 @@ export default function HorizontalBarChart({
   emptyMessage = "No data available",
   barColor = "bg-blue-600",
   showRank = true,
+  onBarClick,
 }: HorizontalBarChartProps) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
@@ -55,9 +57,31 @@ export default function HorizontalBarChart({
         return (
           <div
             key={item.label + idx}
-            className="group relative"
+            className={`group relative${
+              onBarClick ? " cursor-pointer" : ""
+            }`}
             onMouseEnter={() => setHoveredIdx(idx)}
             onMouseLeave={() => setHoveredIdx(null)}
+            onClick={
+              onBarClick
+                ? () => onBarClick(item.label)
+                : undefined
+            }
+            onKeyDown={
+              onBarClick
+                ? (event) => {
+                    if (
+                      event.key === "Enter" ||
+                      event.key === " "
+                    ) {
+                      event.preventDefault();
+                      onBarClick(item.label);
+                    }
+                  }
+                : undefined
+            }
+            role={onBarClick ? "button" : undefined}
+            tabIndex={onBarClick ? 0 : undefined}
           >
             {/* Top row: Label + Values */}
             <div className="mb-1.5 flex items-center justify-between text-xs">

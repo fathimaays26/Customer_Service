@@ -1,36 +1,35 @@
 import Overview from "./pages/Overview";
-import BookingSalesAnalysis from "./pages/BookingSalesAnalysis";
-import DeliveryFulfillment from "./pages/DeliveryFulfillment";
-import ModelMarketPerformance from "./pages/ModelMarketPerformance";
-import PendingBookingsPipeline from "./pages/PendingBookingsPipeline";
+import EnquiryProfile from "./pages/EnquiryProfile";
+import SLAResolutionAnalytics from "./pages/SLAResolutionAnalytics";
+import CustomerSatisfaction from "./pages/CustomerSatisfaction";
+
 import type { DashboardPage } from "./component/Header";
 import { FilterProvider } from "./context/FilterContext";
 import { useState } from "react";
 
 export default function App() {
-  const [activePage, setActivePage] = useState<DashboardPage>("Overview");
+  const [activePage, setActivePage] =
+    useState<DashboardPage>("Overview");
 
   return (
     <FilterProvider>
       {activePage === "Overview" ? (
-        <Overview activePage={activePage} onPageChange={setActivePage} />
-      ) : activePage === "Booking & Sales Analysis" ? (
-        <BookingSalesAnalysis
+        <Overview
           activePage={activePage}
           onPageChange={setActivePage}
         />
-      ) : activePage === "Delivery & Fulfillment" ? (
-        <DeliveryFulfillment
+      ) : activePage === "Enquiry Profile" ? (
+        <EnquiryProfile
           activePage={activePage}
           onPageChange={setActivePage}
         />
-      ) : activePage === "Model & Market Performance" ? (
-        <ModelMarketPerformance
+      ) : activePage === "SLA & Resolution Analytics" ? (
+        <SLAResolutionAnalytics
           activePage={activePage}
           onPageChange={setActivePage}
         />
       ) : (
-        <PendingBookingsPipeline
+        <CustomerSatisfaction
           activePage={activePage}
           onPageChange={setActivePage}
         />

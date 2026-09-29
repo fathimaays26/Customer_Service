@@ -1,32 +1,37 @@
 import { supabase } from "./supabaseClient";
+
 import type {
+  DimApplication,
   DimCustomer,
   DimRegion,
   DimVehicle,
   DimVModel,
-  FactBooking,
-  FactNVVehicleDelivery,
-  FactSalesTarget,
-  FactSalesTransaction,
+  FactServiceCase,
+  FactCaseStatusHistory,
+  FactCustomerFeedback,
+  FactComplaint,
 } from "./index";
 
 export interface DatabaseSnapshot {
-  sales: FactSalesTransaction[];
-  bookings: FactBooking[];
-  deliveries: FactNVVehicleDelivery[];
-  models: DimVModel[];
   vehicles: DimVehicle[];
+  models: DimVModel[];
   regions: DimRegion[];
   customers: DimCustomer[];
-  targets: FactSalesTarget[];
+  applications: DimApplication[];
+  serviceCases: FactServiceCase[];
+  caseStatusHistory: FactCaseStatusHistory[];
+  customerFeedback: FactCustomerFeedback[];
+  complaints: FactComplaint[];
 }
 
 let cachedSnapshot: DatabaseSnapshot | null = null;
 let activeFetchPromise: Promise<DatabaseSnapshot> | null = null;
 
 /**
- * Fetch all rows from a Supabase table handling PostgREST's 1000-row limit.
- * Guaranteed to pull 100% of real backend rows with no truncation and no demo data.
+ * Fetch all rows from a Supabase table while handling
+ * PostgREST's 1000-row response limit.
+ *
+ * This loads the complete real backend dataset.
  */
 async function fetchAllTableRows<T>(
   tableName: string,
@@ -34,36 +39,44 @@ async function fetchAllTableRows<T>(
 ): Promise<T[]> {
   if (!supabase) return [];
 
-  // First request to get total count
   const { count, error: countError } = await supabase
     .from(tableName)
     .select(columns, { count: "exact", head: true });
 
   if (countError) {
-    console.error(`Error counting table ${tableName}:`, countError.message);
+    console.error(
+      `Error counting table ${tableName}:`,
+      countError.message,
+    );
   }
 
   const total = count && count > 0 ? count : 1000;
   const pageSize = 1000;
   const numPages = Math.ceil(total / pageSize);
+
   const requests: Promise<{ data: T[] | null }>[] = [];
 
   for (let page = 0; page < numPages; page++) {
     const from = page * pageSize;
     const to = from + pageSize - 1;
+
     requests.push(
       supabase
         .from(tableName)
         .select(columns)
-        .range(from, to) as unknown as Promise<{ data: T[] | null }>,
+        .range(from, to) as unknown as Promise<{
+        data: T[] | null;
+      }>,
     );
   }
 
   const results = await Promise.all(requests);
+
   const allRows: T[] = [];
-  for (const res of results) {
-    if (res.data) {
-      allRows.push(...res.data);
+
+  for (const result of results) {
+    if (result.data) {
+      allRows.push(...result.data);
     }
   }
 
@@ -71,10 +84,8 @@ async function fetchAllTableRows<T>(
 }
 
 /**
- * Loads all backend tables from Supabase in parallel and caches in memory.
- * This guarantees:
- * 1. 100% real Supabase data is loaded (all 5,566+ sales, 8,000+ bookings, 5,566 deliveries, etc.)
- * 2. Instant tab switching and real-time filtering with zero redundant network waterfalls.
+ * Loads all Customer Service backend tables from Supabase
+ * in parallel and caches them in memory.
  */
 export async function loadDatabaseSnapshot(
   forceRefresh = false,
@@ -90,34 +101,41 @@ export async function loadDatabaseSnapshot(
   activeFetchPromise = (async () => {
     try {
       const [
-        sales,
-        bookings,
-        deliveries,
-        models,
         vehicles,
+        models,
         regions,
         customers,
-        targets,
+        applications,
+        serviceCases,
+        caseStatusHistory,
+        customerFeedback,
+        complaints,
       ] = await Promise.all([
-        fetchAllTableRows<FactSalesTransaction>("fact_sales_transaction"),
-        fetchAllTableRows<FactBooking>("fact_booking"),
-        fetchAllTableRows<FactNVVehicleDelivery>("fact_nv_vehicle_delivery"),
-        fetchAllTableRows<DimVModel>("dim_v_model"),
         fetchAllTableRows<DimVehicle>("dim_vehicle"),
+        fetchAllTableRows<DimVModel>("dim_v_model"),
         fetchAllTableRows<DimRegion>("dim_region"),
         fetchAllTableRows<DimCustomer>("dim_customer"),
-        fetchAllTableRows<FactSalesTarget>("fact_sales_target"),
+        fetchAllTableRows<DimApplication>("dim_application"),
+        fetchAllTableRows<FactServiceCase>("fact_service_case"),
+        fetchAllTableRows<FactCaseStatusHistory>(
+          "fact_case_status_history",
+        ),
+        fetchAllTableRows<FactCustomerFeedback>(
+          "fact_customer_feedback",
+        ),
+        fetchAllTableRows<FactComplaint>("fact_complaints"),
       ]);
 
       cachedSnapshot = {
-        sales,
-        bookings,
-        deliveries,
-        models,
         vehicles,
+        models,
         regions,
         customers,
-        targets,
+        applications,
+        serviceCases,
+        caseStatusHistory,
+        customerFeedback,
+        complaints,
       };
 
       return cachedSnapshot;

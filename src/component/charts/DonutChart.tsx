@@ -12,6 +12,8 @@ interface DonutChartProps {
   height?: number;
   emptyMessage?: string;
   valueFormatter?: (val: number) => string;
+  onItemClick?: (item: DonutItem, index: number) => void;
+  wrapLabels?: boolean;
 }
 
 const DONUT_COLORS = [
@@ -31,6 +33,8 @@ export default function DonutChart({
   height = 260,
   emptyMessage = "No sales mix data available",
   valueFormatter = (v) => formatNumber(v),
+  onItemClick,
+  wrapLabels = false,
 }: DonutChartProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
@@ -105,6 +109,7 @@ export default function DonutChart({
                 className="cursor-pointer transition-all duration-200"
                 onMouseEnter={() => setHoveredIndex(idx)}
                 onMouseLeave={() => setHoveredIndex(null)}
+                onClick={() => onItemClick?.(seg, idx)}
               />
             );
           })}
@@ -144,6 +149,7 @@ export default function DonutChart({
               }`}
               onMouseEnter={() => setHoveredIndex(idx)}
               onMouseLeave={() => setHoveredIndex(null)}
+              onClick={() => onItemClick?.(seg, idx)}
             >
               <div className="flex items-center justify-between text-xs mb-1">
                 <div className="flex items-center gap-2 min-w-0 pr-2">
@@ -151,7 +157,7 @@ export default function DonutChart({
                     className="h-2.5 w-2.5 shrink-0 rounded-full"
                     style={{ backgroundColor: seg.color }}
                   />
-                  <span className="font-semibold text-slate-800 truncate">
+                  <span className={`min-w-0 font-semibold text-slate-800 ${wrapLabels ? "whitespace-normal break-words leading-tight" : "truncate"}`}>
                     {seg.label}
                   </span>
                 </div>

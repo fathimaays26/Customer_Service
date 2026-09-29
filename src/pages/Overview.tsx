@@ -1,23 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import DashboardLayout from "../component/DashboardLayout";
 import KPICard from "../component/KpiCard";
 import ChartCard from "../component/ChartCard";
 import type { DashboardPage } from "../component/Header";
 import { useFilters } from "../context/FilterContext";
-import { formatCurrency, formatNumber, formatPercent } from "../format";
+import { formatNumber } from "../format";
 import { loadDatabaseSnapshot } from "../dataService";
+
 import type {
   DimCustomer,
   DimRegion,
   DimVModel,
-  FactBooking,
-  FactSalesTarget,
-  FactSalesTransaction,
+  DimVehicle,
+  FactServiceCase,
+  FactCaseStatusHistory,
+  FactCustomerFeedback,
   OverviewKpis,
 } from "../index";
+
 import HorizontalBarChart from "../component/charts/HorizontalBarChart";
 import ClusteredColumnChart from "../component/charts/ClusteredColumnChart";
-import MultiLineTrendChart from "../component/charts/MultiLineTrendChart";
 
 const MONTH_ORDER = [
   "Jan",
@@ -34,20 +36,172 @@ const MONTH_ORDER = [
   "Dec",
 ];
 
-function toNumber(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
+function monthLabelFromDate(
+  dateValue: string | null | undefined,
+): string {
+  if (!dateValue) return "Unknown";
+
+  const date = new Date(dateValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return "Unknown";
   }
-  return 0;
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+  }).format(date);
 }
 
-function monthLabelFromDate(dateValue: string | null | undefined): string {
-  if (!dateValue) return "Unknown";
-  const date = new Date(dateValue);
-  if (Number.isNaN(date.getTime())) return "Unknown";
-  return new Intl.DateTimeFormat("en-US", { month: "short" }).format(date);
+function hoursBetween(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): number {
+  if (!start || !end) return 0;
+
+  const startTime = new Date(start).getTime();
+  const endTime = new Date(end).getTime();
+
+  if (Number.isNaN(startTime) || Number.isNaN(endTime)) {
+    return 0;
+  }
+
+  /*
+   * Signed difference — negative values are kept so the
+   * average matches the verified database calculation
+   * AVG(resolution_datetime - open_datetime).
+   */
+  return (endTime - startTime) / (1000 * 60 * 60);
+}
+
+function isResolved(status: string | null | undefined) {
+  const normalized = (status ?? "").trim().toLowerCase();
+
+  return (
+    normalized === "resolved" ||
+    normalized === "closed"
+  );
+}
+
+function isOpenCase(status: string | null | undefined) {
+  return !isResolved(status);
+}
+
+function toBoolean(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+
+    return (
+      normalized === "true" ||
+      normalized === "yes" ||
+      normalized === "1"
+    );
+  }
+
+  if (typeof value === "number") {
+    return value === 1;
+  }
+
+  return false;
+}
+
+interface CategoryRow {
+  label: string;
+  value: number;
+  secondaryLabel?: string;
+  color?: string;
+}
+
+interface RegionRow {
+  label: string;
+  value: number;
+  secondaryLabel?: string;
+  color?: string;
+}
+
+interface ChannelRow {
+  label: string;
+  value: number;
+  secondaryLabel?: string;
+  color?: string;
+}
+
+/*
+ * The Supabase column is `csat_score`, while the shared
+ * FactCustomerFeedback interface still declares the older
+ * `cstat_score` typo. Reading the real column through this
+ * local row shape keeps Overview correct without editing
+ * other pages.
+ */
+interface FeedbackScoreRow extends FactCustomerFeedback {
+  csat_score?: number | string | null;
+}
+
+/*
+ * Drill-down hierarchy used by the Geographical
+ * Service Demand chart:
+ * Region → Vehicle Type → Model → Variant
+ */
+interface DrillNode {
+  label: string;
+  count: number;
+  children: Map<string, DrillNode>;
+}
+
+const REGION_DRILL_LEVELS = [
+  "Region",
+  "Vehicle Type",
+  "Model",
+  "Variant",
+];
+
+function buildDrillHierarchy(
+  rows: Array<{ labels: string[] }>,
+): Map<string, DrillNode> {
+  const root = new Map<string, DrillNode>();
+
+  for (const row of rows) {
+    let level = root;
+
+    row.labels.forEach((label) => {
+      const safeLabel = label || "Unknown";
+
+      let node = level.get(safeLabel);
+
+      if (!node) {
+        node = {
+          label: safeLabel,
+          count: 0,
+          children: new Map(),
+        };
+
+        level.set(safeLabel, node);
+      }
+
+      node.count += 1;
+      level = node.children;
+    });
+  }
+
+  return root;
+}
+
+function getDrillLevel(
+  root: Map<string, DrillNode>,
+  path: string[],
+): Map<string, DrillNode> {
+  let level = root;
+
+  for (const label of path) {
+    const node = level.get(label);
+
+    if (!node) return new Map();
+
+    level = node.children;
+  }
+
+  return level;
 }
 
 export default function Overview({
@@ -58,26 +212,52 @@ export default function Overview({
   onPageChange: (page: DashboardPage) => void;
 }) {
   const [loading, setLoading] = useState(true);
-  const [sales, setSales] = useState<FactSalesTransaction[]>([]);
-  const [bookings, setBookings] = useState<FactBooking[]>([]);
+
+  const [serviceCases, setServiceCases] = useState<
+    FactServiceCase[]
+  >([]);
+
+  const [feedback, setFeedback] = useState<
+    FactCustomerFeedback[]
+  >([]);
+
   const [models, setModels] = useState<DimVModel[]>([]);
+  const [vehicles, setVehicles] = useState<DimVehicle[]>([]);
   const [regions, setRegions] = useState<DimRegion[]>([]);
   const [customers, setCustomers] = useState<DimCustomer[]>([]);
-  const [targets, setTargets] = useState<FactSalesTarget[]>([]);
 
-  const { filters, matchingModelIds, lookups } = useFilters();
+  const [caseStatusHistory, setCaseStatusHistory] = useState<
+    FactCaseStatusHistory[]
+  >([]);
+
+  const [showDetails, setShowDetails] = useState(false);
+
+  const [categoryDrillPath, setCategoryDrillPath] =
+    useState<string[]>([]);
+
+  const [regionDrillPath, setRegionDrillPath] =
+    useState<string[]>([]);
+
+  const {
+    filters,
+    matchingModelIds,
+    matchingCustomerIds,
+  } = useFilters();
 
   useEffect(() => {
     async function loadData() {
       setLoading(true);
+
       try {
         const snapshot = await loadDatabaseSnapshot();
-        setSales(snapshot.sales);
-        setBookings(snapshot.bookings);
+
+        setServiceCases(snapshot.serviceCases);
+        setFeedback(snapshot.customerFeedback);
         setModels(snapshot.models);
+        setVehicles(snapshot.vehicles);
         setRegions(snapshot.regions);
         setCustomers(snapshot.customers);
-        setTargets(snapshot.targets);
+        setCaseStatusHistory(snapshot.caseStatusHistory);
       } finally {
         setLoading(false);
       }
@@ -86,423 +266,1239 @@ export default function Overview({
     void loadData();
   }, []);
 
-  // Apply Global Filters to real data
-  const filteredData = useMemo(() => {
-    let filteredSales = sales;
-    let filteredBookings = bookings;
+  /*
+   * ---------------------------------------------------------
+   * FILTER SERVICE CASES
+   * ---------------------------------------------------------
+   */
 
+  const filteredCases = useMemo(() => {
+    let result = [...serviceCases];
+
+    const vehicleMap = new Map(
+      vehicles.map((vehicle) => [
+        vehicle.vehicle_id,
+        vehicle,
+      ]),
+    );
+
+    const customerMap = new Map(
+      customers.map((customer) => [
+        customer.customer_id,
+        customer,
+      ]),
+    );
+
+    /*
+     * Date
+     */
     if (filters.startDate || filters.endDate) {
-      filteredSales = filteredSales.filter((sale) => {
-        if (!sale.sale_date) return true;
-        if (filters.startDate && sale.sale_date < filters.startDate)
-          return false;
-        if (filters.endDate && sale.sale_date > filters.endDate) return false;
-        return true;
-      });
+      result = result.filter((serviceCase) => {
+        const date = serviceCase.created_date;
 
-      filteredBookings = filteredBookings.filter((booking) => {
-        if (!booking.booking_date) return true;
-        if (filters.startDate && booking.booking_date < filters.startDate)
+        if (!date) return true;
+
+        if (
+          filters.startDate &&
+          date < filters.startDate
+        ) {
           return false;
-        if (filters.endDate && booking.booking_date > filters.endDate)
+        }
+
+        if (
+          filters.endDate &&
+          date > filters.endDate
+        ) {
           return false;
+        }
+
         return true;
       });
     }
 
+    /*
+     * Region
+     */
     if (filters.regionId) {
-      filteredSales = filteredSales.filter(
-        (sale) => sale.region_id === filters.regionId,
+      result = result.filter((serviceCase) => {
+        const customer = customerMap.get(
+          serviceCase.customer_id,
+        );
+
+        return customer?.region_id === filters.regionId;
+      });
+    }
+
+    /*
+     * Application
+     *
+     * fact_service_case carries no application column, so
+     * the link runs through the case vehicle:
+     * fact_service_case.vehicle_id → dim_vehicle.application_id
+     * → dim_application.application_id.
+     */
+    if (filters.applicationId) {
+      const allowedVehicles = new Set(
+        vehicles
+          .filter(
+            (vehicle) =>
+              vehicle.application_id ===
+              filters.applicationId,
+          )
+          .map((vehicle) => vehicle.vehicle_id),
       );
-      const allowedBookingIds = new Set(
-        filteredSales.map((sale) => sale.booking_id),
-      );
-      filteredBookings = filteredBookings.filter((booking) =>
-        allowedBookingIds.has(booking.booking_id),
+
+      result = result.filter((serviceCase) =>
+        allowedVehicles.has(serviceCase.vehicle_id),
       );
     }
 
-    if (filters.modelId || matchingModelIds) {
+    /*
+     * Model / Variant / Vehicle Type
+     */
+    if (
+      filters.modelId ||
+      filters.variant ||
+      filters.vehicleType ||
+      matchingModelIds
+    ) {
       const allowedModelIds = new Set(
-        (matchingModelIds ?? (filters.modelId ? [filters.modelId] : [])).filter(
-          (item): item is string => typeof item === "string" && item.length > 0,
+        (
+          matchingModelIds ??
+          (filters.modelId
+            ? [filters.modelId]
+            : [])
+        ).filter(
+          (value): value is string =>
+            typeof value === "string" &&
+            value.length > 0,
         ),
       );
-      filteredSales = filteredSales.filter((sale) =>
-        allowedModelIds.has(sale.model_id),
-      );
-      filteredBookings = filteredBookings.filter((booking) =>
-        allowedModelIds.has(booking.model_id),
-      );
-    }
 
-    if (filters.variant && lookups) {
-      const variantModelIds = new Set(
-        lookups.models
-          .filter((model) => model.variant === filters.variant)
-          .map((model) => model.model_id),
-      );
-      filteredSales = filteredSales.filter((sale) =>
-        variantModelIds.has(sale.model_id),
-      );
-      filteredBookings = filteredBookings.filter((booking) =>
-        variantModelIds.has(booking.model_id),
-      );
-    }
+      const hasModelFilter =
+        filters.modelId ||
+        filters.variant ||
+        filters.vehicleType ||
+        matchingModelIds;
 
-    if (filters.vehicleType && lookups) {
-      const vehicleTypeModelIds = new Set(
-        lookups.models
-          .filter((model) => model.vehicle_type === filters.vehicleType)
-          .map((model) => model.model_id),
-      );
-      filteredSales = filteredSales.filter((sale) =>
-        vehicleTypeModelIds.has(sale.model_id),
-      );
-      filteredBookings = filteredBookings.filter((booking) =>
-        vehicleTypeModelIds.has(booking.model_id),
-      );
-    }
+      if (hasModelFilter) {
+        result = result.filter((serviceCase) => {
+          const vehicle = vehicleMap.get(
+            serviceCase.vehicle_id,
+          );
 
-    if (filters.customerType) {
-      const allowedCustomerIds = new Set(
-        customers
-          .filter((customer) => customer.customer_type === filters.customerType)
-          .map((customer) => customer.customer_id),
-      );
-      filteredSales = filteredSales.filter((sale) =>
-        allowedCustomerIds.has(sale.customer_id),
-      );
-      filteredBookings = filteredBookings.filter((booking) =>
-        allowedCustomerIds.has(booking.customer_id),
-      );
-    }
+          if (!vehicle) return false;
 
-    if (filters.bookingStatus) {
-      filteredBookings = filteredBookings.filter(
-        (booking) => booking.booking_status === filters.bookingStatus,
-      );
-    }
-
-    return { filteredSales, filteredBookings };
-  }, [sales, bookings, customers, filters, matchingModelIds, lookups]);
-
-  // Compute KPIs & Charts
-  const {
-    totalVehiclesSold,
-    totalSalesRevenue,
-    avgSalesValue,
-    totalBookings,
-    conversionRate,
-    targetAchievement,
-    topSellingModel,
-    salesTrendData,
-    salesByModelData,
-    salesByRegionData,
-    targetActualData,
-  } = useMemo(() => {
-    const { filteredSales, filteredBookings } = filteredData;
-    const soldCount = filteredSales.length;
-    const revenue = filteredSales.reduce(
-      (sum, sale) => sum + toNumber(sale.sale_value),
-      0,
-    );
-    const avgVal = soldCount > 0 ? revenue / soldCount : 0;
-    const bookCount = filteredBookings.length;
-    const convRate = bookCount > 0 ? (soldCount / bookCount) * 100 : 0;
-
-    const filteredTargetRows = targets.filter((row) => {
-      if (filters.regionId && row.region_id !== filters.regionId) return false;
-      if (filters.modelId && row.model_id !== filters.modelId) return false;
-      if (matchingModelIds && !matchingModelIds.includes(row.model_id))
-        return false;
-      return true;
-    });
-
-    const totalTarget = filteredTargetRows.reduce(
-      (sum, row) => sum + toNumber(row.sales_target),
-      0,
-    );
-    const targetAchieve = totalTarget > 0 ? (soldCount / totalTarget) * 100 : 0;
-
-    // Sales by Model
-    const modelMap = new Map<string, number>();
-    for (const sale of filteredSales) {
-      const model = models.find((item) => item.model_id === sale.model_id);
-      const label = model?.model_name ?? sale.model_id;
-      modelMap.set(label, (modelMap.get(label) ?? 0) + 1);
-    }
-
-    // Sales by Region
-    const regionMap = new Map<string, number>();
-    for (const sale of filteredSales) {
-      const region = regions.find((item) => item.region_id === sale.region_id);
-      const label = region?.region_name ?? sale.region_id;
-      regionMap.set(label, (regionMap.get(label) ?? 0) + 1);
-    }
-
-    // Target by Region
-    const targetMap = new Map<string, number>();
-    for (const row of filteredTargetRows) {
-      const region = regions.find((item) => item.region_id === row.region_id);
-      const label = region?.region_name ?? row.region_id;
-      targetMap.set(
-        label,
-        (targetMap.get(label) ?? 0) + toNumber(row.sales_target),
-      );
-    }
-
-    // Monthly Trend
-    const trendMap = new Map<string, number>();
-    for (const mo of MONTH_ORDER) trendMap.set(mo, 0);
-    for (const sale of filteredSales) {
-      const label = monthLabelFromDate(sale.sale_date);
-      if (MONTH_ORDER.includes(label)) {
-        trendMap.set(label, (trendMap.get(label) ?? 0) + 1);
+          return allowedModelIds.has(
+            vehicle.model_id,
+          );
+        });
       }
     }
 
-    const topModel =
-      [...modelMap.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—";
+    /*
+     * Customer Type
+     */
+    if (filters.customerType) {
+      result = result.filter((serviceCase) => {
+        const customer = customerMap.get(
+          serviceCase.customer_id,
+        );
 
-    const sTrend = {
-      labels: MONTH_ORDER,
-      series: [
-        {
-          name: "Vehicles Sold",
-          color: "#2563eb",
-          data: MONTH_ORDER.map((mo) => trendMap.get(mo) ?? 0),
-        },
-      ],
-    };
+        return (
+          customer?.customer_type ===
+          filters.customerType
+        );
+      });
+    }
 
-    const sModel = [...modelMap.entries()]
+    /*
+     * Channel
+     */
+    if (filters.channel) {
+      result = result.filter(
+        (serviceCase) =>
+          serviceCase.channel === filters.channel,
+      );
+    }
+
+    /*
+     * Priority
+     */
+    if (filters.priority) {
+      result = result.filter(
+        (serviceCase) =>
+          serviceCase.priority === filters.priority,
+      );
+    }
+
+    /*
+     * Case Status
+     */
+    if (filters.caseStatus) {
+      result = result.filter(
+        (serviceCase) =>
+          serviceCase.status === filters.caseStatus,
+      );
+    }
+
+    /*
+     * Category
+     */
+    if (filters.category) {
+      result = result.filter(
+        (serviceCase) =>
+          serviceCase.category === filters.category,
+      );
+    }
+
+    /*
+     * matchingCustomerIds from Customer Type / Region
+     */
+    if (matchingCustomerIds) {
+      const allowedCustomers = new Set(
+        matchingCustomerIds,
+      );
+
+      result = result.filter((serviceCase) =>
+        allowedCustomers.has(
+          serviceCase.customer_id,
+        ),
+      );
+    }
+
+    return result;
+  }, [
+    serviceCases,
+    vehicles,
+    customers,
+    filters,
+    matchingModelIds,
+    matchingCustomerIds,
+  ]);
+
+  /*
+   * Reset chart drill-downs whenever the global
+   * filters change the underlying case set.
+   *
+   * Adjusted during render (instead of in an effect)
+   * following React's "previous value" pattern.
+   */
+  const [prevFilteredCases, setPrevFilteredCases] =
+    useState(filteredCases);
+
+  if (prevFilteredCases !== filteredCases) {
+    setPrevFilteredCases(filteredCases);
+    setCategoryDrillPath([]);
+    setRegionDrillPath([]);
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * FEEDBACK FILTERING
+   * ---------------------------------------------------------
+   */
+
+  const filteredFeedback = useMemo(() => {
+    const caseIds = new Set(
+      filteredCases.map((serviceCase) =>
+        serviceCase.case_id,
+      ),
+    );
+
+    return feedback.filter((item) =>
+      caseIds.has(item.case_id),
+    );
+  }, [feedback, filteredCases]);
+
+  /*
+   * ---------------------------------------------------------
+   * REOPENED CASES
+   *
+   * Derived purely from fact_case_status_history: a case is
+   * reopened when its history shows it reached Resolved /
+   * Closed and a later event moved it back to a non-resolved
+   * status (Open / In Progress).
+   * ---------------------------------------------------------
+   */
+  const reopenedCaseIds = useMemo(() => {
+    const eventsByCase = new Map<
+      string,
+      FactCaseStatusHistory[]
+    >();
+
+    for (const historyEntry of caseStatusHistory) {
+      const entries =
+        eventsByCase.get(historyEntry.case_id) ?? [];
+
+      entries.push(historyEntry);
+      eventsByCase.set(historyEntry.case_id, entries);
+    }
+
+    const reopenedIds = new Set<string>();
+
+    for (const [caseId, entries] of eventsByCase) {
+      entries.sort(
+        (a, b) =>
+          new Date(a.status_date_time).getTime() -
+            new Date(b.status_date_time).getTime() ||
+          a.history_id.localeCompare(b.history_id),
+      );
+
+      let resolvedSeen = false;
+
+      for (const entry of entries) {
+        if (isResolved(entry.status)) {
+          resolvedSeen = true;
+          continue;
+        }
+
+        if (resolvedSeen) {
+          reopenedIds.add(caseId);
+          break;
+        }
+      }
+    }
+
+    return reopenedIds;
+  }, [caseStatusHistory]);
+
+  /*
+   * ---------------------------------------------------------
+   * KPIs + CHART DATA
+   * ---------------------------------------------------------
+   */
+
+  const metrics = useMemo(() => {
+    const totalCases = filteredCases.length;
+
+    const openCases = filteredCases.filter(
+      (serviceCase) =>
+        isOpenCase(serviceCase.status),
+    );
+
+    const resolvedCases = filteredCases.filter(
+      (serviceCase) =>
+        isResolved(serviceCase.status) &&
+        serviceCase.resolution_datetime,
+    );
+
+    /*
+     * Average Resolution Time (hours).
+     *
+     * Matches the verified database calculation:
+     * AVG(resolution_datetime - open_datetime) over
+     * Resolved/Closed cases that have a resolution
+     * timestamp (2,447 rows → 304.76 hours).
+     *
+     * Every difference counts — including negative
+     * ones — so the frontend stays in sync with the
+     * SQL result. Do not re-add a positivity filter.
+     */
+    const resolutionHours = resolvedCases.map(
+      (serviceCase) =>
+        hoursBetween(
+          serviceCase.open_datetime,
+          serviceCase.resolution_datetime,
+        ),
+    );
+
+    const averageResolutionTime =
+      resolutionHours.length > 0
+        ? resolutionHours.reduce(
+            (sum, value) => sum + value,
+            0,
+          ) / resolutionHours.length
+        : 0;
+
+    /*
+     * CSAT
+     */
+    const csatScores = filteredFeedback
+      .map((item) =>
+        Number(
+          (item as FeedbackScoreRow).csat_score ??
+            item.cstat_score,
+        ),
+      )
+      .filter((value) => Number.isFinite(value));
+
+    const csatScore =
+      csatScores.length > 0
+        ? csatScores.reduce(
+            (sum, value) => sum + value,
+            0,
+          ) / csatScores.length
+        : 0;
+
+    /*
+     * Escalations
+     */
+    const escalatedCases = filteredCases.filter(
+      (serviceCase) =>
+        toBoolean(serviceCase.escalated_flag),
+    );
+
+    /*
+     * Reopened Cases — filtered cases whose status history
+     * shows a resolution followed by a return to an
+     * unresolved status.
+     */
+    const reopenedCases = filteredCases.filter(
+      (serviceCase) =>
+        reopenedCaseIds.has(serviceCase.case_id),
+    );
+
+    /*
+     * -------------------------------------------------------
+     * SERVICE CASE TREND
+     * -------------------------------------------------------
+     */
+
+    const enquiriesByMonth = new Map<
+      string,
+      number
+    >();
+
+    const resolvedByMonth = new Map<
+      string,
+      number
+    >();
+
+    for (const month of MONTH_ORDER) {
+      enquiriesByMonth.set(month, 0);
+      resolvedByMonth.set(month, 0);
+    }
+
+    for (const serviceCase of filteredCases) {
+      const enquiryMonth = monthLabelFromDate(
+        serviceCase.created_date,
+      );
+
+      if (MONTH_ORDER.includes(enquiryMonth)) {
+        enquiriesByMonth.set(
+          enquiryMonth,
+          (enquiriesByMonth.get(enquiryMonth) ?? 0) +
+            1,
+        );
+      }
+
+      if (
+        serviceCase.resolution_datetime &&
+        isResolved(serviceCase.status)
+      ) {
+        const resolutionMonth =
+          monthLabelFromDate(
+            serviceCase.resolution_datetime,
+          );
+
+        if (MONTH_ORDER.includes(resolutionMonth)) {
+          resolvedByMonth.set(
+            resolutionMonth,
+            (resolvedByMonth.get(resolutionMonth) ??
+              0) + 1,
+          );
+        }
+      }
+    }
+
+    /*
+     * Category
+     */
+    const categoryMap = new Map<
+      string,
+      number
+    >();
+
+    for (const serviceCase of filteredCases) {
+      const category =
+        serviceCase.category || "Unknown";
+
+      categoryMap.set(
+        category,
+        (categoryMap.get(category) ?? 0) + 1,
+      );
+    }
+
+    const categoryData: CategoryRow[] = [
+      ...categoryMap.entries(),
+    ]
       .map(([label, value]) => ({
         label,
         value,
-        secondaryLabel: `${((value / (soldCount || 1)) * 100).toFixed(1)}% of volume`,
+        secondaryLabel: `${(
+          (value / Math.max(totalCases, 1)) *
+          100
+        ).toFixed(1)}%`,
         color: "bg-blue-600",
       }))
       .sort((a, b) => b.value - a.value);
 
-    const sRegion = [...regionMap.entries()]
+    /*
+     * Region
+     */
+    const regionMap = new Map<
+      string,
+      number
+    >();
+
+    const regionLookup = new Map(
+      regions.map((region) => [
+        region.region_id,
+        region,
+      ]),
+    );
+
+    const customerLookup = new Map(
+      customers.map((customer) => [
+        customer.customer_id,
+        customer,
+      ]),
+    );
+
+    for (const serviceCase of filteredCases) {
+      const customer = customerLookup.get(
+        serviceCase.customer_id,
+      );
+
+      const regionName =
+        regionLookup.get(customer?.region_id ?? "")
+          ?.region_name ??
+        "Unknown";
+
+      regionMap.set(
+        regionName,
+        (regionMap.get(regionName) ?? 0) + 1,
+      );
+    }
+
+    const regionData: RegionRow[] = [
+      ...regionMap.entries(),
+    ]
       .map(([label, value]) => ({
         label,
         value,
-        secondaryLabel: `${((value / (soldCount || 1)) * 100).toFixed(1)}% share`,
+        secondaryLabel: `${(
+          (value / Math.max(totalCases, 1)) *
+          100
+        ).toFixed(1)}% of cases`,
         color: "bg-indigo-600",
       }))
       .sort((a, b) => b.value - a.value);
 
-    // Target vs Actual Clustered Column
-    const tActual = regions.map((reg) => {
-      const actual = regionMap.get(reg.region_name) ?? 0;
-      const target = targetMap.get(reg.region_name) ?? 0;
-      return {
-        category: reg.region_name,
-        series: [
-          { name: "Actual Sold", value: actual, color: "bg-blue-600" },
-          { name: "Target", value: target, color: "bg-slate-300" },
-        ],
-      };
-    });
+    /*
+     * Channel
+     */
+    const channelMap = new Map<
+      string,
+      number
+    >();
+
+    for (const serviceCase of filteredCases) {
+      const channel =
+        serviceCase.channel || "Unknown";
+
+      channelMap.set(
+        channel,
+        (channelMap.get(channel) ?? 0) + 1,
+      );
+    }
+
+    const channelData: ChannelRow[] = [
+      ...channelMap.entries(),
+    ]
+      .map(([label, value]) => ({
+        label,
+        value,
+        secondaryLabel: `${(
+          (value / Math.max(totalCases, 1)) *
+          100
+        ).toFixed(1)}% of cases`,
+        color: "bg-blue-600",
+      }))
+      .sort((a, b) => b.value - a.value);
 
     return {
-      totalVehiclesSold: soldCount,
-      totalSalesRevenue: revenue,
-      avgSalesValue: avgVal,
-      totalBookings: bookCount,
-      conversionRate: convRate,
-      targetAchievement: targetAchieve,
-      topSellingModel: topModel,
-      salesTrendData: sTrend,
-      salesByModelData: sModel,
-      salesByRegionData: sRegion,
-      targetActualData: tActual,
-    };
-  }, [filteredData, targets, filters, matchingModelIds, models, regions]);
+      kpis: {
+        totalServiceCases: totalCases,
+        openCases: openCases.length,
+        averageResolutionTime,
+        csatScore,
+        escalatedCases: escalatedCases.length,
+        reopenedCases: reopenedCases.length,
+      } satisfies OverviewKpis,
 
-  const kpis: OverviewKpis = useMemo(
-    () => ({
-      totalVehiclesSold,
-      totalSalesRevenue,
-      avgSalesValue,
-      totalBookings,
-      conversionRate,
-      targetAchievement,
-      topSellingModel,
-    }),
-    [
-      totalVehiclesSold,
-      totalSalesRevenue,
-      avgSalesValue,
-      totalBookings,
-      conversionRate,
-      targetAchievement,
-      topSellingModel,
-    ],
-  );
+      trendData: {
+        labels: MONTH_ORDER,
+        series: [
+          {
+            name: "Service Cases",
+            data: MONTH_ORDER.map(
+              (month) =>
+                enquiriesByMonth.get(month) ?? 0,
+            ),
+            color: "#2563eb",
+          },
+          {
+            name: "Resolved Cases",
+            data: MONTH_ORDER.map(
+              (month) =>
+                resolvedByMonth.get(month) ?? 0,
+            ),
+            color: "#10b981",
+          },
+        ],
+      },
+
+      categoryData,
+      regionData,
+      channelData,
+    };
+  }, [
+    filteredCases,
+    filteredFeedback,
+    reopenedCaseIds,
+    regions,
+    customers,
+  ]);
+
+  const kpis = metrics.kpis;
+
+  /*
+   * ---------------------------------------------------------
+   * CHART DRILL-DOWNS
+   * ---------------------------------------------------------
+   */
+
+  /*
+   * Service Cases by Category → Priority
+   */
+  const categoryPriorityData = useMemo<CategoryRow[]>(() => {
+    const selectedCategory = categoryDrillPath[0];
+
+    if (!selectedCategory) return [];
+
+    const priorityMap = new Map<string, number>();
+
+    let total = 0;
+
+    for (const serviceCase of filteredCases) {
+      const category =
+        serviceCase.category || "Unknown";
+
+      if (category !== selectedCategory) continue;
+
+      const priority =
+        serviceCase.priority || "Unknown";
+
+      priorityMap.set(
+        priority,
+        (priorityMap.get(priority) ?? 0) + 1,
+      );
+
+      total += 1;
+    }
+
+    return [...priorityMap.entries()]
+      .map(([label, value]) => ({
+        label,
+        value,
+        secondaryLabel: `${(
+          (value / Math.max(total, 1)) *
+          100
+        ).toFixed(1)}%`,
+        color: "bg-blue-600",
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [filteredCases, categoryDrillPath]);
+
+  /*
+   * Geographical Service Demand
+   * Region → Vehicle Type → Model → Variant
+   */
+  const regionHierarchy = useMemo(() => {
+    const vehicleMap = new Map(
+      vehicles.map((vehicle) => [
+        vehicle.vehicle_id,
+        vehicle,
+      ]),
+    );
+
+    const modelMap = new Map(
+      models.map((model) => [model.model_id, model]),
+    );
+
+    const customerMap = new Map(
+      customers.map((customer) => [
+        customer.customer_id,
+        customer,
+      ]),
+    );
+
+    const regionMap = new Map(
+      regions.map((region) => [
+        region.region_id,
+        region,
+      ]),
+    );
+
+    return buildDrillHierarchy(
+      filteredCases.map((serviceCase) => {
+        const customer = customerMap.get(
+          serviceCase.customer_id,
+        );
+
+        const vehicle = vehicleMap.get(
+          serviceCase.vehicle_id,
+        );
+
+        const model = vehicle
+          ? modelMap.get(vehicle.model_id)
+          : undefined;
+
+        const regionName =
+          regionMap.get(customer?.region_id ?? "")
+            ?.region_name ?? "Unknown";
+
+        return {
+          labels: [
+            regionName,
+            model?.vehicle_type || "Unknown",
+            model?.model_name || "Unknown",
+            model?.variant || "Unknown",
+          ],
+        };
+      }),
+    );
+  }, [
+    filteredCases,
+    regions,
+    models,
+    vehicles,
+    customers,
+  ]);
+
+  const regionDrillData = useMemo<RegionRow[]>(() => {
+    const level = getDrillLevel(
+      regionHierarchy,
+      regionDrillPath,
+    );
+
+    const total = [...level.values()].reduce(
+      (sum, node) => sum + node.count,
+      0,
+    );
+
+    return [...level.values()]
+      .map((node) => ({
+        label: node.label,
+        value: node.count,
+        secondaryLabel: `${(
+          (node.count / Math.max(total, 1)) *
+          100
+        ).toFixed(1)}%`,
+        color: "bg-indigo-600",
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [regionHierarchy, regionDrillPath]);
+
+  /*
+   * ---------------------------------------------------------
+   * INLINE SERVICE CASE DETAILS
+   * ---------------------------------------------------------
+   */
+
+  if (showDetails) {
+    const customerMap = new Map(
+      customers.map((customer) => [
+        customer.customer_id,
+        customer,
+      ]),
+    );
+
+    return (
+      <DashboardLayout
+        activePage={activePage}
+        onPageChange={onPageChange}
+      >
+        <div className="mb-5 flex items-center justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-slate-900">
+                Service Case Details
+              </h1>
+
+              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
+                {filteredCases.length} Cases
+              </span>
+            </div>
+
+            <p className="mt-1 text-xs text-slate-500">
+              Underlying customer service cases matching
+              the current global filters.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowDetails(false)}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-xs transition hover:border-blue-300 hover:text-blue-700"
+          >
+            ← Back to Overview
+          </button>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xs">
+          <div className="max-h-[calc(100vh-190px)] overflow-auto">
+            <table className="min-w-full text-xs">
+              <thead className="sticky top-0 z-10 bg-slate-50">
+                <tr className="border-b border-slate-200">
+                  {[
+                    "Case ID",
+                    "Customer",
+                    "Category",
+                    "Channel",
+                    "Priority",
+                    "Status",
+                    "Created",
+                    "Resolution",
+                  ].map((header) => (
+                    <th
+                      key={header}
+                      className="whitespace-nowrap px-4 py-3 text-left font-semibold text-slate-600"
+                    >
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+
+              <tbody>
+                {filteredCases.map(
+                  (serviceCase) => {
+                    const customer =
+                      customerMap.get(
+                        serviceCase.customer_id,
+                      );
+
+                    return (
+                      <tr
+                        key={serviceCase.case_id}
+                        className="border-b border-slate-100 hover:bg-slate-50"
+                      >
+                        <td className="px-4 py-3 font-semibold text-slate-800">
+                          {serviceCase.case_id}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-700">
+                          {customer?.customer_name ??
+                            serviceCase.customer_id}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-700">
+                          {serviceCase.category}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-700">
+                          {serviceCase.channel}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-700">
+                          {serviceCase.priority}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-700">
+                          {serviceCase.status}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-600">
+                          {serviceCase.created_date}
+                        </td>
+
+                        <td className="px-4 py-3 text-slate-600">
+                          {serviceCase.resolution_datetime ??
+                            "—"}
+                        </td>
+                      </tr>
+                    );
+                  },
+                )}
+
+                {filteredCases.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={8}
+                      className="px-4 py-12 text-center text-sm text-slate-500"
+                    >
+                      No service cases match the
+                      current filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  /*
+   * ---------------------------------------------------------
+   * MAIN OVERVIEW
+   * ---------------------------------------------------------
+   */
 
   return (
-    <DashboardLayout activePage={activePage} onPageChange={onPageChange}>
+    <DashboardLayout
+      activePage={activePage}
+      onPageChange={onPageChange}
+    >
       {/* Header Banner */}
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200/90 shadow-xs">
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200/90 bg-white p-5 shadow-xs">
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Executive Overview
+              Service Overview
             </h1>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">
+
+            <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
               Page 1
             </span>
           </div>
+
           <p className="mt-1 text-xs text-slate-500">
-            High-level executive summary of new vehicle bookings, revenue, and
-            target performance across all markets.
+            Executive view of service demand, workload,
+            resolution performance, and customer
+            satisfaction.
           </p>
         </div>
-        
       </div>
 
-      {/* KPI Cards Row (7 Cards) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 2xl:grid-cols-7 gap-3.5 mb-6">
+      {/* =====================================================
+          KPI ROW
+          ===================================================== */}
+
+      <div className="mb-6 grid grid-cols-2 gap-3.5 sm:grid-cols-3 md:grid-cols-6">
         <KPICard
-          title="Vehicles Sold"
-          value={formatNumber(kpis.totalVehiclesSold)}
-          subtext="Total units delivered"
-          tooltip="Total count of confirmed vehicle sales transactions"
+          title="Total Service Cases"
+          value={formatNumber(
+            kpis.totalServiceCases,
+          )}
+          
+          tooltip="Total number of customer service cases matching the current filters"
           accentColor="blue"
           loading={loading}
         />
+
         <KPICard
-          title="Sales Revenue"
-          value={formatCurrency(kpis.totalSalesRevenue)}
-          subtext="Gross top-line revenue"
-          tooltip="Total cumulative value of all vehicle sales transactions"
-          accentColor="emerald"
+          title="Open Cases"
+          value={formatNumber(kpis.openCases)}
+          
+          tooltip="Cases whose current status is not Resolved or Closed"
+          accentColor="amber"
           loading={loading}
         />
+
         <KPICard
-          title="Avg Sales Value"
-          value={formatCurrency(kpis.avgSalesValue)}
-          subtext="Per vehicle average"
-          tooltip="Average revenue per vehicle sold"
+          title="Avg Resolution Time"
+          value={`${(
+            kpis.averageResolutionTime / 24
+          ).toFixed(1)} days`}
+          
+          tooltip="Average time between case open time and resolution time for resolved cases, shown in days"
           accentColor="indigo"
           loading={loading}
         />
+
         <KPICard
-          title="Total Bookings"
-          value={formatNumber(kpis.totalBookings)}
-          subtext="All customer bookings"
-          tooltip="Total customer booking orders logged in the database"
-          accentColor="blue"
-          loading={loading}
-        />
-        <KPICard
-          title="Conversion"
-          value={formatPercent(kpis.conversionRate)}
-          subtext="Bookings to sales"
-          tooltip="Vehicles sold ÷ Total customer bookings"
-          progress={{
-            value: kpis.conversionRate,
-            max: 100,
-            color: "bg-blue-600",
-          }}
+          title="CSAT Score"
+          value={kpis.csatScore.toFixed(2)}
+          
+          tooltip="Average customer satisfaction score from available feedback responses"
           accentColor="emerald"
           loading={loading}
         />
+
         <KPICard
-          title="Target Achieved"
-          value={formatPercent(kpis.targetAchievement)}
-          subtext="vs annual target"
-          tooltip="Actual vehicles sold ÷ Sales targets quota"
-          progress={{
-            value: Math.min(100, kpis.targetAchievement),
-            max: 100,
-            color:
-              kpis.targetAchievement >= 100 ? "bg-emerald-500" : "bg-amber-500",
-          }}
-          accentColor={kpis.targetAchievement >= 100 ? "emerald" : "amber"}
+          title="Escalated Cases"
+          value={formatNumber(
+            kpis.escalatedCases,
+          )}
+          
+          tooltip="Number of service cases marked as escalated"
+          accentColor="rose"
           loading={loading}
         />
+
         <KPICard
-          title="Top Model"
-          value={kpis.topSellingModel}
-          subtext="Volume champion"
-          tooltip="Highest selling Toyota model line"
-          badge="Top Performer"
-          accentColor="indigo"
+          title="Reopened Cases"
+          value={formatNumber(
+            kpis.reopenedCases,
+          )}
+          
+          tooltip="Cases whose status history shows they were resolved and later moved back to an unresolved status"
+          accentColor="slate"
           loading={loading}
         />
       </div>
 
-      {/* Row 1: Sales Trend & Target vs Actual */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 mb-5">
-        {/* Sales Trend */}
+      {/* =====================================================
+          ROW 1 — TREND + CATEGORY
+          ===================================================== */}
+
+      <div className="mb-5 grid grid-cols-1 gap-5 lg:grid-cols-12">
+        {/* Service Case Trend */}
+
         <div className="lg:col-span-7">
           <ChartCard
-            title="Sales Trend"
-            subtitle="Overall monthly new vehicle sales volume across the operational calendar"
-            
-            height={290}
+            title="Service Case Trend"
+            subtitle="Monthly service cases compared with completed resolutions"
+            height={285}
+            action={
+              <button
+                type="button"
+                onClick={() => setShowDetails(true)}
+                title="View Service Case Details"
+                className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 shadow-2xs transition-all hover:bg-blue-600 hover:text-white"
+              >
+                <svg
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2.5}
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3"
+                  />
+                </svg>
+              </button>
+            }
           >
-            <MultiLineTrendChart
-              labels={salesTrendData.labels}
-              series={salesTrendData.series}
-              valueFormatter={(v) => formatNumber(v)}
-              height={220}
-            />
+            <div className="h-[205px]">
+              <ClusteredColumnChart
+                data={MONTH_ORDER.map(
+                  (month, index) => ({
+                    category: month,
+                    series: [
+                      {
+                        name: "Service Cases",
+                        value:
+                          metrics.trendData
+                            .series[0]
+                            .data[index],
+                        color:
+                          "bg-blue-600",
+                      },
+                      {
+                        name: "Resolved Cases",
+                        value:
+                          metrics.trendData
+                            .series[1]
+                            .data[index],
+                        color:
+                          "bg-emerald-500",
+                      },
+                    ],
+                  }),
+                )}
+                valueFormatter={(value) =>
+                  formatNumber(value)
+                }
+                height={195}
+                showLegend={true}
+              />
+            </div>
           </ChartCard>
         </div>
 
-        {/* Target vs Actual */}
+        {/* Service Cases by Category */}
+
         <div className="lg:col-span-5">
           <ChartCard
-            title="Target vs Actual"
-            subtitle="Actual vehicles sold vs sales targets comparison by region"
-            
-            height={290}
+            title="Service Cases by Category"
+            subtitle="Service demand by category · Click a category to view priority"
+            height={285}
+            action={
+              categoryDrillPath.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setCategoryDrillPath(
+                      (currentPath) =>
+                        currentPath.slice(0, -1),
+                    )
+                  }
+                  className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+                >
+                  ← Back
+                </button>
+              ) : undefined
+            }
           >
-            <ClusteredColumnChart
-              data={targetActualData}
-              valueFormatter={(v) => formatNumber(v)}
-              height={220}
-              showLegend={true}
-            />
+            {categoryDrillPath.length > 0 && (
+              <div className="mb-2 flex items-center gap-1.5 text-[11px] text-slate-500">
+                {[
+                  ...categoryDrillPath,
+                  "Priority",
+                ].map((label, index, path) => (
+                  <Fragment key={`${label}-${index}`}>
+                    {index > 0 && (
+                      <span className="text-slate-300">
+                        →
+                      </span>
+                    )}
+                    <span
+                      className={
+                        index === path.length - 1
+                          ? "font-semibold text-blue-700"
+                          : ""
+                      }
+                    >
+                      {label}
+                    </span>
+                  </Fragment>
+                ))}
+              </div>
+            )}
+
+            <div className="h-[220px] overflow-y-auto pr-1">
+              {categoryDrillPath.length === 0 ? (
+                <HorizontalBarChart
+                  data={metrics.categoryData}
+                  valueFormatter={(value) =>
+                    formatNumber(value)
+                  }
+                  showRank={true}
+                  onBarClick={(label) =>
+                    setCategoryDrillPath([label])
+                  }
+                />
+              ) : (
+                <HorizontalBarChart
+                  data={categoryPriorityData}
+                  valueFormatter={(value) =>
+                    formatNumber(value)
+                  }
+                  showRank={true}
+                />
+              )}
+            </div>
           </ChartCard>
         </div>
       </div>
 
-      {/* Row 2: Sales by Model & Sales by Region */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-        {/* Sales by Model */}
+      {/* =====================================================
+          ROW 2 — REGION + CHANNEL
+          ===================================================== */}
+
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+        {/* Service Demand by Region */}
+
         <ChartCard
-          title="Sales by Model"
-          subtitle="Total vehicle sales volume ranked across all Toyota model lines"
-          
-          height={280}
+          title="Service Demand by Region"
+          subtitle="Service demand by region · Click a region to drill into vehicle details"
+          height={285}
+          action={
+            regionDrillPath.length > 0 ? (
+              <button
+                type="button"
+                onClick={() =>
+                  setRegionDrillPath(
+                    (currentPath) =>
+                      currentPath.slice(0, -1),
+                  )
+                }
+                className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
+              >
+                ← Back
+              </button>
+            ) : undefined
+          }
         >
-          <div className="h-[210px] overflow-y-auto pr-1">
-            <HorizontalBarChart
-              data={salesByModelData}
-              valueFormatter={(v) => formatNumber(v)}
-              showRank={true}
-            />
+          {regionDrillPath.length > 0 && (
+            <div className="mb-2 flex items-center gap-1.5 text-[11px] text-slate-500">
+              {[
+                ...regionDrillPath,
+                REGION_DRILL_LEVELS[
+                  regionDrillPath.length
+                ],
+              ].map((label, index, path) => (
+                <Fragment key={`${label}-${index}`}>
+                  {index > 0 && (
+                    <span className="text-slate-300">
+                      →
+                    </span>
+                  )}
+                  <span
+                    className={
+                      index === path.length - 1
+                        ? "font-semibold text-blue-700"
+                        : ""
+                    }
+                  >
+                    {label}
+                  </span>
+                </Fragment>
+              ))}
+            </div>
+          )}
+
+          <div className="h-[220px] overflow-y-auto pr-1">
+            {regionDrillPath.length === 0 ? (
+              <HorizontalBarChart
+                data={metrics.regionData}
+                valueFormatter={(value) =>
+                  formatNumber(value)
+                }
+                barColor="bg-indigo-600"
+                showRank={true}
+                onBarClick={(label) =>
+                  setRegionDrillPath([label])
+                }
+              />
+            ) : (
+              <HorizontalBarChart
+                data={regionDrillData}
+                valueFormatter={(value) =>
+                  formatNumber(value)
+                }
+                barColor="bg-indigo-600"
+                showRank={true}
+                onBarClick={
+                  regionDrillPath.length <
+                  REGION_DRILL_LEVELS.length - 1
+                    ? (label) =>
+                        setRegionDrillPath(
+                          (currentPath) => [
+                            ...currentPath,
+                            label,
+                          ],
+                        )
+                    : undefined
+                }
+              />
+            )}
           </div>
         </ChartCard>
 
-        {/* Sales by Region */}
+        {/* Service Cases by Channel */}
+
         <ChartCard
-          title="Sales by Region"
-          subtitle="Regional market sales volume contribution across operating territories"
-          
-          height={280}
+          title="Service Cases by Channel"
+          subtitle="Customer contact channels"
+          height={285}
         >
-          <div className="h-[210px] overflow-y-auto pr-1">
+          <div className="h-[220px] overflow-y-auto pr-1">
             <HorizontalBarChart
-              data={salesByRegionData}
-              valueFormatter={(v) => formatNumber(v)}
-              barColor="bg-indigo-600"
+              data={metrics.channelData}
+              valueFormatter={(value) =>
+                formatNumber(value)
+              }
+              barColor="bg-blue-600"
               showRank={true}
             />
           </div>
