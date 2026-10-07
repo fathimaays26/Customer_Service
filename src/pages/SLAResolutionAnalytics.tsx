@@ -6,6 +6,7 @@ import type { DashboardPage } from "../component/Header";
 import { useFilters } from "../context/FilterContext";
 import { formatNumber, formatPercent } from "../format";
 import { loadDatabaseSnapshot } from "../dataService";
+import { matchesServiceCaseTimeBuckets } from "../timeBuckets";
 
 import type {
   DimCustomer,
@@ -53,17 +54,10 @@ function isOpenCase(status: string | null | undefined): boolean {
   return normalized === "open" || normalized === "in progress";
 }
 
-function isResolved(
-  status: string | null | undefined,
-) {
-  const normalized = (status ?? "")
-    .trim()
-    .toLowerCase();
+function isResolved(status: string | null | undefined) {
+  const normalized = (status ?? "").trim().toLowerCase();
 
-  return (
-    normalized === "resolved" ||
-    normalized === "closed"
-  );
+  return normalized === "resolved" || normalized === "closed";
 }
 
 function hoursBetween(
@@ -75,36 +69,21 @@ function hoursBetween(
   const startTime = new Date(start).getTime();
   const endTime = new Date(end).getTime();
 
-  if (
-    Number.isNaN(startTime) ||
-    Number.isNaN(endTime) ||
-    endTime < startTime
-  ) {
+  if (Number.isNaN(startTime) || Number.isNaN(endTime) || endTime < startTime) {
     return 0;
   }
 
-  return (
-    (endTime - startTime) /
-    (1000 * 60 * 60)
-  );
+  return (endTime - startTime) / (1000 * 60 * 60);
 }
 
-
-
-function getPendingAgeDays(
-  openDate: string | null | undefined,
-) {
+function getPendingAgeDays(openDate: string | null | undefined) {
   if (!openDate) return 0;
 
   const opened = new Date(openDate).getTime();
 
   if (Number.isNaN(opened)) return 0;
 
-  return Math.max(
-    0,
-    (Date.now() - opened) /
-    (1000 * 60 * 60 * 24),
-  );
+  return Math.max(0, (Date.now() - opened) / (1000 * 60 * 60 * 24));
 }
 
 function getAgeBucket(ageDays: number) {
@@ -114,9 +93,7 @@ function getAgeBucket(ageDays: number) {
   return "90+ Days";
 }
 
-function getResolutionBucket(
-  hours: number,
-) {
+function getResolutionBucket(hours: number) {
   if (hours <= 24) return "0–1 days";
   if (hours <= 48) return "1–2 days";
   if (hours <= 72) return "2–3 days";
@@ -131,10 +108,7 @@ function buildHierarchy(
     escalated: boolean;
   }>,
 ) {
-  const root = new Map<
-    string,
-    HierarchyNode
-  >();
+  const root = new Map<string, HierarchyNode>();
 
   for (const row of rows) {
     let level = root;
@@ -170,10 +144,7 @@ function buildHierarchy(
   return root;
 }
 
-function getHierarchyView(
-  root: Map<string, HierarchyNode>,
-  path: string[],
-) {
+function getHierarchyView(root: Map<string, HierarchyNode>, path: string[]) {
   let level = root;
 
   for (const label of path) {
@@ -187,8 +158,7 @@ function getHierarchyView(
   }
 
   return [...level.values()].sort(
-    (a, b) => b.tatSum / Math.max(b.count, 1) -
-      a.tatSum / Math.max(a.count, 1),
+    (a, b) => b.tatSum / Math.max(b.count, 1) - a.tatSum / Math.max(a.count, 1),
   );
 }
 
@@ -199,38 +169,24 @@ export default function SLAResolutionAnalytics({
   activePage: DashboardPage;
   onPageChange: (page: DashboardPage) => void;
 }) {
-  const {
-    filters,
-    matchingModelIds,
-    matchingCustomerIds,
-  } = useFilters();
+  const { filters, setFilter, matchingModelIds, matchingCustomerIds } =
+    useFilters();
 
   const [loading, setLoading] = useState(true);
 
-  const [serviceCases, setServiceCases] = useState<
-    FactServiceCase[]
-  >([]);
+  const [serviceCases, setServiceCases] = useState<FactServiceCase[]>([]);
 
-  const [vehicles, setVehicles] = useState<
-    DimVehicle[]
-  >([]);
+  const [vehicles, setVehicles] = useState<DimVehicle[]>([]);
 
-  const [models, setModels] = useState<
-    DimVModel[]
-  >([]);
+  const [models, setModels] = useState<DimVModel[]>([]);
 
-  const [customers, setCustomers] = useState<
-    DimCustomer[]
-  >([]);
+  const [customers, setCustomers] = useState<DimCustomer[]>([]);
 
   const [caseStatusHistory, setCaseStatusHistory] = useState<
     FactCaseStatusHistory[]
   >([]);
 
-
-
-  const [categoryDrillPath, setCategoryDrillPath] =
-    useState<string[]>([]);
+  const [categoryDrillPath, setCategoryDrillPath] = useState<string[]>([]);
 
   /*
    * ---------------------------------------------------------
@@ -243,15 +199,13 @@ export default function SLAResolutionAnalytics({
       setLoading(true);
 
       try {
-        const snapshot =
-          await loadDatabaseSnapshot();
+        const snapshot = await loadDatabaseSnapshot();
 
         setServiceCases(snapshot.serviceCases);
         setVehicles(snapshot.vehicles);
         setModels(snapshot.models);
         setCustomers(snapshot.customers);
         setCaseStatusHistory(snapshot.caseStatusHistory);
-
       } finally {
         setLoading(false);
       }
@@ -267,39 +221,20 @@ export default function SLAResolutionAnalytics({
    */
 
   const vehicleById = useMemo(
-    () =>
-      new Map(
-        vehicles.map((vehicle) => [
-          vehicle.vehicle_id,
-          vehicle,
-        ]),
-      ),
+    () => new Map(vehicles.map((vehicle) => [vehicle.vehicle_id, vehicle])),
     [vehicles],
   );
 
   const modelById = useMemo(
-    () =>
-      new Map(
-        models.map((model) => [
-          model.model_id,
-          model,
-        ]),
-      ),
+    () => new Map(models.map((model) => [model.model_id, model])),
     [models],
   );
 
   const customerById = useMemo(
     () =>
-      new Map(
-        customers.map((customer) => [
-          customer.customer_id,
-          customer,
-        ]),
-      ),
+      new Map(customers.map((customer) => [customer.customer_id, customer])),
     [customers],
   );
-
-
 
   /*
    * ---------------------------------------------------------
@@ -309,36 +244,31 @@ export default function SLAResolutionAnalytics({
 
   const filteredCases = useMemo(() => {
     return serviceCases.filter((serviceCase) => {
-      const vehicle = vehicleById.get(
-        serviceCase.vehicle_id,
-      );
+      if (
+        !matchesServiceCaseTimeBuckets(
+          serviceCase,
+          filters.pendingAgeBucket,
+          filters.resolutionTimeBucket,
+        )
+      ) {
+        return false;
+      }
 
-      const model = vehicle
-        ? modelById.get(vehicle.model_id)
-        : undefined;
+      const vehicle = vehicleById.get(serviceCase.vehicle_id);
 
-      const customer =
-        customerById.get(
-          serviceCase.customer_id,
-        );
+      const model = vehicle ? modelById.get(vehicle.model_id) : undefined;
+
+      const customer = customerById.get(serviceCase.customer_id);
 
       /*
        * Date
        */
 
-      if (
-        filters.startDate &&
-        serviceCase.created_date <
-        filters.startDate
-      ) {
+      if (filters.startDate && serviceCase.created_date < filters.startDate) {
         return false;
       }
 
-      if (
-        filters.endDate &&
-        serviceCase.created_date >
-        filters.endDate
-      ) {
+      if (filters.endDate && serviceCase.created_date > filters.endDate) {
         return false;
       }
 
@@ -346,10 +276,7 @@ export default function SLAResolutionAnalytics({
        * Region
        */
 
-      if (
-        filters.regionId &&
-        customer?.region_id !== filters.regionId
-      ) {
+      if (filters.regionId && customer?.region_id !== filters.regionId) {
         return false;
       }
 
@@ -368,18 +295,13 @@ export default function SLAResolutionAnalytics({
        * Model
        */
 
-      if (
-        filters.modelId &&
-        vehicle?.model_id !== filters.modelId
-      ) {
+      if (filters.modelId && vehicle?.model_id !== filters.modelId) {
         return false;
       }
 
       if (
         matchingModelIds &&
-        !matchingModelIds.includes(
-          vehicle?.model_id ?? "",
-        )
+        !matchingModelIds.includes(vehicle?.model_id ?? "")
       ) {
         return false;
       }
@@ -388,10 +310,7 @@ export default function SLAResolutionAnalytics({
        * Variant
        */
 
-      if (
-        filters.variant &&
-        model?.variant !== filters.variant
-      ) {
+      if (filters.variant && model?.variant !== filters.variant) {
         return false;
       }
 
@@ -399,11 +318,7 @@ export default function SLAResolutionAnalytics({
        * Vehicle Type
        */
 
-      if (
-        filters.vehicleType &&
-        model?.vehicle_type !==
-        filters.vehicleType
-      ) {
+      if (filters.vehicleType && model?.vehicle_type !== filters.vehicleType) {
         return false;
       }
 
@@ -413,8 +328,7 @@ export default function SLAResolutionAnalytics({
 
       if (
         filters.customerType &&
-        customer?.customer_type !==
-        filters.customerType
+        customer?.customer_type !== filters.customerType
       ) {
         return false;
       }
@@ -425,9 +339,7 @@ export default function SLAResolutionAnalytics({
 
       if (
         matchingCustomerIds &&
-        !matchingCustomerIds.includes(
-          serviceCase.customer_id,
-        )
+        !matchingCustomerIds.includes(serviceCase.customer_id)
       ) {
         return false;
       }
@@ -436,11 +348,7 @@ export default function SLAResolutionAnalytics({
        * Category
        */
 
-      if (
-        filters.category &&
-        serviceCase.category !==
-        filters.category
-      ) {
+      if (filters.category && serviceCase.category !== filters.category) {
         return false;
       }
 
@@ -448,10 +356,7 @@ export default function SLAResolutionAnalytics({
        * Channel
        */
 
-      if (
-        filters.channel &&
-        serviceCase.channel !== filters.channel
-      ) {
+      if (filters.channel && serviceCase.channel !== filters.channel) {
         return false;
       }
 
@@ -459,10 +364,7 @@ export default function SLAResolutionAnalytics({
        * Priority
        */
 
-      if (
-        filters.priority &&
-        serviceCase.priority !== filters.priority
-      ) {
+      if (filters.priority && serviceCase.priority !== filters.priority) {
         return false;
       }
 
@@ -470,11 +372,7 @@ export default function SLAResolutionAnalytics({
        * Status
        */
 
-      if (
-        filters.caseStatus &&
-        serviceCase.status !==
-        filters.caseStatus
-      ) {
+      if (filters.caseStatus && serviceCase.status !== filters.caseStatus) {
         return false;
       }
 
@@ -509,19 +407,14 @@ export default function SLAResolutionAnalytics({
 
   const resolutionTATHours = resolvedCases
     .map((serviceCase) =>
-      hoursBetween(
-        serviceCase.open_datetime,
-        serviceCase.resolution_datetime,
-      ),
+      hoursBetween(serviceCase.open_datetime, serviceCase.resolution_datetime),
     )
     .filter((hours) => hours > 0);
 
   const averageResolutionTAT =
     resolutionTATHours.length > 0
-      ? resolutionTATHours.reduce(
-          (sum, hours) => sum + hours,
-          0,
-        ) / resolutionTATHours.length
+      ? resolutionTATHours.reduce((sum, hours) => sum + hours, 0) /
+        resolutionTATHours.length
       : 0;
 
   const pendingCases = filteredCases.filter(
@@ -687,10 +580,7 @@ export default function SLAResolutionAnalytics({
       if (normalized === "open") {
         counts.set("Open", (counts.get("Open") ?? 0) + 1);
       } else if (normalized === "in progress") {
-        counts.set(
-          "In Progress",
-          (counts.get("In Progress") ?? 0) + 1,
-        );
+        counts.set("In Progress", (counts.get("In Progress") ?? 0) + 1);
       } else if (normalized === "resolved" || normalized === "closed") {
         counts.set("Resolved", (counts.get("Resolved") ?? 0) + 1);
       }
@@ -706,26 +596,18 @@ export default function SLAResolutionAnalytics({
    */
 
   const pendingAgeingData = useMemo(() => {
-    const counts = new Map<
-      string,
-      number
-    >();
+    const counts = new Map<string, number>();
 
     for (const bucket of AGE_BUCKETS) {
       counts.set(bucket, 0);
     }
 
     for (const serviceCase of pendingCases) {
-      const age = getPendingAgeDays(
-        serviceCase.open_datetime,
-      );
+      const age = getPendingAgeDays(serviceCase.open_datetime);
 
       const bucket = getAgeBucket(age);
 
-      counts.set(
-        bucket,
-        (counts.get(bucket) ?? 0) + 1,
-      );
+      counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
     }
 
     return AGE_BUCKETS.map((bucket) => ({
@@ -746,48 +628,37 @@ export default function SLAResolutionAnalytics({
    * ---------------------------------------------------------
    */
 
-  const resolutionDistributionData =
-    useMemo(() => {
-      const counts = new Map<
-        string,
-        number
-      >();
+  const resolutionDistributionData = useMemo(() => {
+    const counts = new Map<string, number>();
 
-      for (const bucket of RESOLUTION_BUCKETS) {
-        counts.set(bucket, 0);
-      }
+    for (const bucket of RESOLUTION_BUCKETS) {
+      counts.set(bucket, 0);
+    }
 
-      for (const serviceCase of resolvedCases) {
-        const hours = hoursBetween(
-          serviceCase.open_datetime,
-          serviceCase.resolution_datetime,
-        );
-
-        if (hours <= 0) continue;
-
-        const bucket =
-          getResolutionBucket(hours);
-
-        counts.set(
-          bucket,
-          (counts.get(bucket) ?? 0) + 1,
-        );
-      }
-
-      return RESOLUTION_BUCKETS.map(
-        (bucket) => ({
-          category: bucket,
-          series: [
-            {
-              name: "Resolved Cases",
-              value:
-                counts.get(bucket) ?? 0,
-              color: "bg-blue-600",
-            },
-          ],
-        }),
+    for (const serviceCase of resolvedCases) {
+      const hours = hoursBetween(
+        serviceCase.open_datetime,
+        serviceCase.resolution_datetime,
       );
-    }, [resolvedCases]);
+
+      if (hours <= 0) continue;
+
+      const bucket = getResolutionBucket(hours);
+
+      counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+    }
+
+    return RESOLUTION_BUCKETS.map((bucket) => ({
+      category: bucket,
+      series: [
+        {
+          name: "Resolved Cases",
+          value: counts.get(bucket) ?? 0,
+          color: "bg-blue-600",
+        },
+      ],
+    }));
+  }, [resolvedCases]);
 
   /*
    * ---------------------------------------------------------
@@ -796,47 +667,32 @@ export default function SLAResolutionAnalytics({
    */
 
   const categoryHierarchy = useMemo(() => {
-    const rows = filteredCases.map(
-      (serviceCase) => {
-        const tatHours =
-          isResolved(serviceCase.status)
-            ? hoursBetween(
-              serviceCase.open_datetime,
-              serviceCase.resolution_datetime,
-            )
-            : 0;
+    const rows = filteredCases.map((serviceCase) => {
+      const tatHours = isResolved(serviceCase.status)
+        ? hoursBetween(
+            serviceCase.open_datetime,
+            serviceCase.resolution_datetime,
+          )
+        : 0;
 
-        return {
-          labels: [
-            serviceCase.category ||
-            "Unknown Category",
+      return {
+        labels: [
+          serviceCase.category || "Unknown Category",
 
-            serviceCase.priority ||
-            "Unknown Priority",
-          ],
-          tatHours,
-          escalated: isEscalated(
-            serviceCase.escalated_flag,
-          ),
-        };
-      },
-    );
+          serviceCase.priority || "Unknown Priority",
+        ],
+        tatHours,
+        escalated: isEscalated(serviceCase.escalated_flag),
+      };
+    });
 
     return buildHierarchy(rows);
   }, [filteredCases]);
 
-  const categoryHierarchyView =
-    useMemo(
-      () =>
-        getHierarchyView(
-          categoryHierarchy,
-          categoryDrillPath,
-        ),
-      [
-        categoryHierarchy,
-        categoryDrillPath,
-      ],
-    );
+  const categoryHierarchyView = useMemo(
+    () => getHierarchyView(categoryHierarchy, categoryDrillPath),
+    [categoryHierarchy, categoryDrillPath],
+  );
 
   /*
    * ---------------------------------------------------------
@@ -844,60 +700,46 @@ export default function SLAResolutionAnalytics({
    * ---------------------------------------------------------
    */
 
-  const resolutionTATByCategory =
-    useMemo(() => {
-      const categoryMap = new Map<
-        string,
-        {
-          totalHours: number;
-          resolvedCount: number;
-        }
-      >();
-
-      for (const serviceCase of resolvedCases) {
-        const category =
-          serviceCase.category ||
-          "Unknown";
-
-        const tat = hoursBetween(
-          serviceCase.open_datetime,
-          serviceCase.resolution_datetime,
-        );
-
-        const current =
-          categoryMap.get(category) ?? {
-            totalHours: 0,
-            resolvedCount: 0,
-          };
-
-        current.totalHours += tat;
-        current.resolvedCount += 1;
-
-        categoryMap.set(
-          category,
-          current,
-        );
+  const resolutionTATByCategory = useMemo(() => {
+    const categoryMap = new Map<
+      string,
+      {
+        totalHours: number;
+        resolvedCount: number;
       }
+    >();
 
-      return [...categoryMap.entries()]
-        .map(([label, stats]) => ({
-          label,
-          value:
-            stats.resolvedCount > 0
-              ? Number(
-                (
-                  stats.totalHours /
-                  stats.resolvedCount
-                ).toFixed(1),
-              )
-              : 0,
-          secondaryLabel: `${formatNumber(
-            stats.resolvedCount,
-          )} resolved`,
-          color: "bg-blue-600",
-        }))
-        .sort((a, b) => b.value - a.value);
-    }, [resolvedCases]);
+    for (const serviceCase of resolvedCases) {
+      const category = serviceCase.category || "Unknown";
+
+      const tat = hoursBetween(
+        serviceCase.open_datetime,
+        serviceCase.resolution_datetime,
+      );
+
+      const current = categoryMap.get(category) ?? {
+        totalHours: 0,
+        resolvedCount: 0,
+      };
+
+      current.totalHours += tat;
+      current.resolvedCount += 1;
+
+      categoryMap.set(category, current);
+    }
+
+    return [...categoryMap.entries()]
+      .map(([label, stats]) => ({
+        label,
+        value:
+          stats.resolvedCount > 0
+            ? Number((stats.totalHours / stats.resolvedCount).toFixed(1))
+            : 0,
+        secondaryLabel: `${formatNumber(stats.resolvedCount)} resolved`,
+        color: "bg-blue-600",
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [resolvedCases]);
 
   /*
    * ---------------------------------------------------------
@@ -905,74 +747,55 @@ export default function SLAResolutionAnalytics({
    * ---------------------------------------------------------
    */
 
-  const escalationRateByCategory =
-    useMemo(() => {
-      const categoryMap = new Map<
-        string,
-        {
-          total: number;
-          escalated: number;
-        }
-      >();
+  const escalationRateByCategory = useMemo(() => {
+    const categoryMap = new Map<
+      string,
+      {
+        total: number;
+        escalated: number;
+      }
+    >();
 
-      for (const serviceCase of filteredCases) {
-        const category =
-          serviceCase.category ||
-          "Unknown";
+    for (const serviceCase of filteredCases) {
+      const category = serviceCase.category || "Unknown";
 
-        const current =
-          categoryMap.get(category) ?? {
-            total: 0,
-            escalated: 0,
-          };
+      const current = categoryMap.get(category) ?? {
+        total: 0,
+        escalated: 0,
+      };
 
-        current.total += 1;
+      current.total += 1;
 
-        if (
-          isEscalated(
-            serviceCase.escalated_flag,
-          )
-        ) {
-          current.escalated += 1;
-        }
-
-        categoryMap.set(
-          category,
-          current,
-        );
+      if (isEscalated(serviceCase.escalated_flag)) {
+        current.escalated += 1;
       }
 
-      return [...categoryMap.entries()]
-        .map(([label, stats]) => {
-          const rate =
-            stats.total > 0
-              ? Number(
-                (
-                  (stats.escalated /
-                    stats.total) *
-                  100
-                ).toFixed(1),
-              )
-              : 0;
+      categoryMap.set(category, current);
+    }
 
-          return {
-            label,
-            value: rate,
-            secondaryLabel: `${formatNumber(
-              stats.escalated,
-            )}/${formatNumber(
-              stats.total,
-            )} escalated`,
-            color:
-              rate >= 20
-                ? "bg-rose-500"
-                : rate >= 10
-                  ? "bg-amber-500"
-                  : "bg-blue-600",
-          };
-        })
-        .sort((a, b) => b.value - a.value);
-    }, [filteredCases]);
+    return [...categoryMap.entries()]
+      .map(([label, stats]) => {
+        const rate =
+          stats.total > 0
+            ? Number(((stats.escalated / stats.total) * 100).toFixed(1))
+            : 0;
+
+        return {
+          label,
+          value: rate,
+          secondaryLabel: `${formatNumber(stats.escalated)}/${formatNumber(
+            stats.total,
+          )} escalated`,
+          color:
+            rate >= 20
+              ? "bg-rose-500"
+              : rate >= 10
+                ? "bg-amber-500"
+                : "bg-blue-600",
+        };
+      })
+      .sort((a, b) => b.value - a.value);
+  }, [filteredCases]);
 
   /*
    * ---------------------------------------------------------
@@ -985,21 +808,16 @@ export default function SLAResolutionAnalytics({
    */
 
   const lifecycleData = useMemo(() => {
-    return statusCounts.map(
-      ([status, count]) => ({
-        category: status,
-        series: [
-          {
-            name: "Cases",
-            value: count,
-            color:
-              status === "Resolved"
-                ? "bg-emerald-500"
-                : "bg-blue-600",
-          },
-        ],
-      }),
-    );
+    return statusCounts.map(([status, count]) => ({
+      category: status,
+      series: [
+        {
+          name: "Cases",
+          value: count,
+          color: status === "Resolved" ? "bg-emerald-500" : "bg-blue-600",
+        },
+      ],
+    }));
   }, [statusCounts]);
 
   /*
@@ -1009,10 +827,7 @@ export default function SLAResolutionAnalytics({
    */
 
   return (
-    <DashboardLayout
-      activePage={activePage}
-      onPageChange={onPageChange}
-    >
+    <DashboardLayout activePage={activePage} onPageChange={onPageChange}>
       {/* Header */}
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200/90 bg-white p-5 shadow-xs">
         <div>
@@ -1027,7 +842,8 @@ export default function SLAResolutionAnalytics({
           </div>
 
           <p className="mt-1 text-xs text-slate-500">
-            Resolution performance, current workload, ageing, and escalation patterns.
+            Resolution performance, current workload, ageing, and escalation
+            patterns.
           </p>
         </div>
       </div>
@@ -1169,6 +985,17 @@ export default function SLAResolutionAnalytics({
                           <div
                             key={segment.status}
                             className="flex items-center justify-between gap-4"
+                            onClick={() =>
+                              setFilter("caseStatus", segment.status)
+                            }
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setFilter("caseStatus", segment.status);
+                              }
+                            }}
+                            role="button"
+                            tabIndex={0}
                           >
                             <div className="flex min-w-0 items-center gap-2">
                               <span
@@ -1221,6 +1048,15 @@ export default function SLAResolutionAnalytics({
                   <div
                     key={row.label}
                     className="flex h-full min-w-0 flex-1 flex-col items-center justify-end"
+                    onClick={() => setFilter("pendingAgeBucket", row.label)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setFilter("pendingAgeBucket", row.label);
+                      }
+                    }}
+                    role="button"
+                    tabIndex={0}
                   >
                     <span className="mb-2 text-xs font-semibold tabular-nums text-slate-600">
                       {formatNumber(row.value)}
@@ -1258,14 +1094,13 @@ export default function SLAResolutionAnalytics({
           height={320}
         >
           <ClusteredColumnChart
-            data={
-              resolutionDistributionData
-            }
-            valueFormatter={(value) =>
-              formatNumber(value)
-            }
+            data={resolutionDistributionData}
+            valueFormatter={(value) => formatNumber(value)}
             height={235}
             showLegend={false}
+            onCategoryClick={(label) =>
+              setFilter("resolutionTimeBucket", label)
+            }
           />
         </ChartCard>
 
@@ -1280,12 +1115,8 @@ export default function SLAResolutionAnalytics({
               <button
                 type="button"
                 onClick={() =>
-                  setCategoryDrillPath(
-                    (currentPath) =>
-                      currentPath.slice(
-                        0,
-                        -1,
-                      ),
+                  setCategoryDrillPath((currentPath) =>
+                    currentPath.slice(0, -1),
                   )
                 }
                 className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-700"
@@ -1296,172 +1127,132 @@ export default function SLAResolutionAnalytics({
           }
         >
           <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-slate-500">
-            {["Category", "Priority"].map(
-              (level, index) => (
-                <span
-                  key={level}
-                  className="flex items-center gap-1.5"
-                >
-                  {index > 0 && (
-                    <span className="text-slate-300">
-                      →
-                    </span>
-                  )}
+            {["Category", "Priority"].map((level, index) => (
+              <span key={level} className="flex items-center gap-1.5">
+                {index > 0 && <span className="text-slate-300">→</span>}
 
-                  <span
-                    className={
-                      index ===
-                        categoryDrillPath.length
-                        ? "font-semibold text-blue-700"
-                        : ""
-                    }
-                  >
-                    {level}
-                  </span>
+                <span
+                  className={
+                    index === categoryDrillPath.length
+                      ? "font-semibold text-blue-700"
+                      : ""
+                  }
+                >
+                  {level}
                 </span>
-              ),
-            )}
+              </span>
+            ))}
           </div>
 
           <div className="h-[215px] overflow-y-auto pr-1">
             {categoryDrillPath.length === 0 ? (
               <div className="space-y-3">
-                {resolutionTATByCategory.map(
-                  (row, index) => (
-                    <button
-                      key={row.label}
-                      type="button"
-                      onClick={() =>
-                        setCategoryDrillPath([
-                          row.label,
-                        ])
-                      }
-                      className="group block w-full text-left"
-                      title={`Drill into ${row.label} by priority`}
-                    >
-                      <div className="mb-1 flex items-center justify-between text-xs">
-                        <span className="flex items-center gap-2 font-semibold text-slate-700">
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-slate-100 text-[10px] font-bold text-slate-500">
-                            {index + 1}
-                          </span>
-                          <span className="transition-colors group-hover:text-blue-700">
-                            {row.label}
-                          </span>
+                {resolutionTATByCategory.map((row, index) => (
+                  <button
+                    key={row.label}
+                    type="button"
+                    onClick={() => setCategoryDrillPath([row.label])}
+                    className="group block w-full text-left"
+                    title={`Drill into ${row.label} by priority`}
+                  >
+                    <div className="mb-1 flex items-center justify-between text-xs">
+                      <span className="flex items-center gap-2 font-semibold text-slate-700">
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded bg-slate-100 text-[10px] font-bold text-slate-500">
+                          {index + 1}
                         </span>
-
-                        <span className="flex items-center gap-2 font-semibold text-slate-600">
-                          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
-                            {row.secondaryLabel}
-                          </span>
-                          <span>
-                            {(row.value / 24).toFixed(1)} days
-                          </span>
+                        <span className="transition-colors group-hover:text-blue-700">
+                          {row.label}
                         </span>
-                      </div>
+                      </span>
 
-                      <div className="h-3 overflow-hidden rounded-md bg-slate-100">
-                        <div
-                          className="h-full rounded-md bg-blue-600 transition-all group-hover:bg-blue-700"
-                          style={{
-                            width: `${Math.min(
-                              100,
-                              row.value /
+                      <span className="flex items-center gap-2 font-semibold text-slate-600">
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
+                          {row.secondaryLabel}
+                        </span>
+                        <span>{(row.value / 24).toFixed(1)} days</span>
+                      </span>
+                    </div>
+
+                    <div className="h-3 overflow-hidden rounded-md bg-slate-100">
+                      <div
+                        className="h-full rounded-md bg-blue-600 transition-all group-hover:bg-blue-700"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            (row.value /
                               Math.max(
                                 0.1,
                                 ...resolutionTATByCategory.map(
                                   (item) => item.value,
                                 ),
-                              ) *
+                              )) *
                               100,
+                          )}%`,
+                        }}
+                      />
+                    </div>
+
+                    <div className="mt-1 flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400">
+                        Click to drill into priority
+                      </span>
+                      <span className="text-[10px] font-semibold text-blue-500 opacity-0 transition-opacity group-hover:opacity-100">
+                        View Priority →
+                      </span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {categoryHierarchyView.map((node) => {
+                  const avgTAT = node.count > 0 ? node.tatSum / node.count : 0;
+
+                  return (
+                    <div key={node.label} className="group">
+                      <div className="mb-1 flex items-center justify-between text-xs">
+                        <span className="font-semibold text-slate-700">
+                          {node.label}
+                        </span>
+
+                        <span className="font-semibold text-slate-600">
+                          {(avgTAT / 24).toFixed(1)} days
+                        </span>
+                      </div>
+
+                      <div className="h-3 overflow-hidden rounded-md bg-slate-100">
+                        <div
+                          className="h-full rounded-md bg-blue-600"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              (avgTAT /
+                                Math.max(
+                                  1,
+                                  ...categoryHierarchyView.map(
+                                    (item) =>
+                                      item.tatSum / Math.max(item.count, 1),
+                                  ),
+                                )) *
+                                100,
                             )}%`,
                           }}
                         />
                       </div>
 
-                      <div className="mt-1 flex items-center justify-between">
-                        <span className="text-[10px] text-slate-400">
-                          Click to drill into priority
-                        </span>
-                        <span className="text-[10px] font-semibold text-blue-500 opacity-0 transition-opacity group-hover:opacity-100">
-                          View Priority →
-                        </span>
-                      </div>
-                    </button>
-                  ),
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {categoryHierarchyView.map(
-                  (node) => {
-                    const avgTAT =
-                      node.count > 0
-                        ? node.tatSum /
-                        node.count
-                        : 0;
-
-                    return (
-                      <div
-                        key={node.label}
-                        className="group"
-                      >
-                        <div className="mb-1 flex items-center justify-between text-xs">
-                          <span className="font-semibold text-slate-700">
-                            {node.label}
-                          </span>
-
-                          <span className="font-semibold text-slate-600">
-                            {(avgTAT / 24).toFixed(
-                              1,
-                            )}{" "}
-                            days
-                          </span>
-                        </div>
-
-                        <div className="h-3 overflow-hidden rounded-md bg-slate-100">
-                          <div
-                            className="h-full rounded-md bg-blue-600"
-                            style={{
-                              width: `${Math.min(
-                                100,
-                                avgTAT /
-                                Math.max(
-                                  1,
-                                  ...categoryHierarchyView.map(
-                                    (
-                                      item,
-                                    ) =>
-                                      item.tatSum /
-                                      Math.max(
-                                        item.count,
-                                        1,
-                                      ),
-                                  ),
-                                ) *
-                                100,
-                              )}%`,
-                            }}
-                          />
-                        </div>
-
-                        <span className="mt-0.5 block text-[10px] text-slate-400">
-                          {formatNumber(
-                            node.count,
-                          )}{" "}
-                          resolved cases
-                        </span>
-                      </div>
-                    );
-                  },
-                )}
+                      <span className="mt-0.5 block text-[10px] text-slate-400">
+                        {formatNumber(node.count)} resolved cases
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
 
           {categoryDrillPath.length === 0 && (
             <div className="mt-2 text-[10px] text-slate-400">
-              Click a category to drill into
-              priority.
+              Click a category to drill into priority.
             </div>
           )}
         </ChartCard>

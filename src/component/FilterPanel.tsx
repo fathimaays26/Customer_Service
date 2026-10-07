@@ -1,5 +1,6 @@
 import { useFilters } from "../context/FilterContext";
 import DateRangeSlider from "./DateRangeSlider";
+import { PENDING_AGE_BUCKETS, RESOLUTION_TIME_BUCKETS } from "../timeBuckets";
 
 function Field({
   label,
@@ -17,9 +18,7 @@ function Field({
           {label}
         </label>
 
-        {isActive && (
-          <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />
-        )}
+        {isActive && <span className="h-1.5 w-1.5 rounded-full bg-blue-600" />}
       </div>
 
       {children}
@@ -31,13 +30,8 @@ const selectBase =
   "w-full rounded-lg border bg-white px-3 py-2 text-xs font-medium transition-all focus:outline-none focus:ring-2 focus:ring-blue-500/20";
 
 export default function FilterPanel() {
-  const {
-    filters,
-    setFilter,
-    resetFilters,
-    lookups,
-    loadingLookups,
-  } = useFilters();
+  const { filters, setFilter, resetFilters, lookups, loadingLookups } =
+    useFilters();
 
   const activeCount = Object.values(filters).filter(
     (value) => value !== null && value !== "",
@@ -72,31 +66,23 @@ export default function FilterPanel() {
 
       <div className="space-y-1">
         {/* 1. Region */}
-        <Field
-          label="Region"
-          isActive={Boolean(filters.regionId)}
-        >
+        <Field label="Region" isActive={Boolean(filters.regionId)}>
           <select
-            className={`${selectBase} ${filters.regionId
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.regionId
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.regionId ?? ""}
             onChange={(event) =>
-              setFilter(
-                "regionId",
-                event.target.value || null,
-              )
+              setFilter("regionId", event.target.value || null)
             }
           >
             <option value="">All Regions</option>
 
             {lookups?.regions.map((region) => (
-              <option
-                key={region.region_id}
-                value={region.region_id}
-              >
+              <option key={region.region_id} value={region.region_id}>
                 {region.region_name}
               </option>
             ))}
@@ -104,22 +90,17 @@ export default function FilterPanel() {
         </Field>
 
         {/* 2. Application */}
-        <Field
-          label="Application"
-          isActive={Boolean(filters.applicationId)}
-        >
+        <Field label="Application" isActive={Boolean(filters.applicationId)}>
           <select
-            className={`${selectBase} ${filters.applicationId
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.applicationId
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.applicationId ?? ""}
             onChange={(event) =>
-              setFilter(
-                "applicationId",
-                event.target.value || null,
-              )
+              setFilter("applicationId", event.target.value || null)
             }
           >
             <option value="">All Applications</option>
@@ -136,31 +117,23 @@ export default function FilterPanel() {
         </Field>
 
         {/* 3. Model */}
-        <Field
-          label="Model"
-          isActive={Boolean(filters.modelId)}
-        >
+        <Field label="Model" isActive={Boolean(filters.modelId)}>
           <select
-            className={`${selectBase} ${filters.modelId
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.modelId
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.modelId ?? ""}
             onChange={(event) =>
-              setFilter(
-                "modelId",
-                event.target.value || null,
-              )
+              setFilter("modelId", event.target.value || null)
             }
           >
             <option value="">All Models</option>
 
             {lookups?.models.map((model) => (
-              <option
-                key={model.model_id}
-                value={model.model_id}
-              >
+              <option key={model.model_id} value={model.model_id}>
                 {model.model_name}
               </option>
             ))}
@@ -168,22 +141,17 @@ export default function FilterPanel() {
         </Field>
 
         {/* 4. Variant */}
-        <Field
-          label="Variant"
-          isActive={Boolean(filters.variant)}
-        >
+        <Field label="Variant" isActive={Boolean(filters.variant)}>
           <select
-            className={`${selectBase} ${filters.variant
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.variant
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.variant ?? ""}
             onChange={(event) =>
-              setFilter(
-                "variant",
-                event.target.value || null,
-              )
+              setFilter("variant", event.target.value || null)
             }
           >
             <option value="">All Variants</option>
@@ -197,31 +165,23 @@ export default function FilterPanel() {
         </Field>
 
         {/* 5. Vehicle Type */}
-        <Field
-          label="Vehicle Type"
-          isActive={Boolean(filters.vehicleType)}
-        >
+        <Field label="Vehicle Type" isActive={Boolean(filters.vehicleType)}>
           <select
-            className={`${selectBase} ${filters.vehicleType
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.vehicleType
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.vehicleType ?? ""}
             onChange={(event) =>
-              setFilter(
-                "vehicleType",
-                event.target.value || null,
-              )
+              setFilter("vehicleType", event.target.value || null)
             }
           >
             <option value="">All Vehicle Types</option>
 
             {lookups?.vehicleTypes.map((vehicleType) => (
-              <option
-                key={vehicleType}
-                value={vehicleType}
-              >
+              <option key={vehicleType} value={vehicleType}>
                 {vehicleType}
               </option>
             ))}
@@ -229,22 +189,17 @@ export default function FilterPanel() {
         </Field>
 
         {/* 6. Customer Type */}
-        <Field
-          label="Customer Type"
-          isActive={Boolean(filters.customerType)}
-        >
+        <Field label="Customer Type" isActive={Boolean(filters.customerType)}>
           <select
-            className={`${selectBase} ${filters.customerType
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.customerType
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.customerType ?? ""}
             onChange={(event) =>
-              setFilter(
-                "customerType",
-                event.target.value || null,
-              )
+              setFilter("customerType", event.target.value || null)
             }
           >
             <option value="">All Customer Types</option>
@@ -257,22 +212,17 @@ export default function FilterPanel() {
         </Field>
 
         {/* 7. Channel */}
-        <Field
-          label="Channel"
-          isActive={Boolean(filters.channel)}
-        >
+        <Field label="Channel" isActive={Boolean(filters.channel)}>
           <select
-            className={`${selectBase} ${filters.channel
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.channel
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.channel ?? ""}
             onChange={(event) =>
-              setFilter(
-                "channel",
-                event.target.value || null,
-              )
+              setFilter("channel", event.target.value || null)
             }
           >
             <option value="">All Channels</option>
@@ -286,22 +236,17 @@ export default function FilterPanel() {
         </Field>
 
         {/* 8. Priority */}
-        <Field
-          label="Priority"
-          isActive={Boolean(filters.priority)}
-        >
+        <Field label="Priority" isActive={Boolean(filters.priority)}>
           <select
-            className={`${selectBase} ${filters.priority
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.priority
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.priority ?? ""}
             onChange={(event) =>
-              setFilter(
-                "priority",
-                event.target.value || null,
-              )
+              setFilter("priority", event.target.value || null)
             }
           >
             <option value="">All Priorities</option>
@@ -315,22 +260,17 @@ export default function FilterPanel() {
         </Field>
 
         {/* 9. Case Status */}
-        <Field
-          label="Case Status"
-          isActive={Boolean(filters.caseStatus)}
-        >
+        <Field label="Case Status" isActive={Boolean(filters.caseStatus)}>
           <select
-            className={`${selectBase} ${filters.caseStatus
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.caseStatus
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.caseStatus ?? ""}
             onChange={(event) =>
-              setFilter(
-                "caseStatus",
-                event.target.value || null,
-              )
+              setFilter("caseStatus", event.target.value || null)
             }
           >
             <option value="">All Case Statuses</option>
@@ -344,33 +284,74 @@ export default function FilterPanel() {
         </Field>
 
         {/* 10. Category */}
-        <Field
-          label="Category"
-          isActive={Boolean(filters.category)}
-        >
+        <Field label="Category" isActive={Boolean(filters.category)}>
           <select
-            className={`${selectBase} ${filters.category
-              ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
-              : "border-slate-200 text-slate-700"
-              }`}
+            className={`${selectBase} ${
+              filters.category
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
             disabled={loadingLookups}
             value={filters.category ?? ""}
             onChange={(event) =>
-              setFilter(
-                "category",
-                event.target.value || null,
-              )
+              setFilter("category", event.target.value || null)
             }
           >
             <option value="">All Categories</option>
 
-            {lookups?.caseCategories.map(
-              (category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ),
-            )}
+            {lookups?.caseCategories.map((category) => (
+              <option key={category} value={category}>
+                {category}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field
+          label="Pending Case Ageing"
+          isActive={Boolean(filters.pendingAgeBucket)}
+        >
+          <select
+            className={`${selectBase} ${
+              filters.pendingAgeBucket
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
+            value={filters.pendingAgeBucket ?? ""}
+            onChange={(event) =>
+              setFilter("pendingAgeBucket", event.target.value || null)
+            }
+          >
+            <option value="">All Pending Case Ages</option>
+            {PENDING_AGE_BUCKETS.map((bucket) => (
+              <option key={bucket} value={bucket}>
+                {bucket}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <Field
+          label="Resolution Time Distribution"
+          isActive={Boolean(filters.resolutionTimeBucket)}
+        >
+          <select
+            className={`${selectBase} ${
+              filters.resolutionTimeBucket
+                ? "border-blue-500 bg-blue-50/30 text-blue-900 font-semibold"
+                : "border-slate-200 text-slate-700"
+            }`}
+            value={filters.resolutionTimeBucket ?? ""}
+            onChange={(event) =>
+              setFilter("resolutionTimeBucket", event.target.value || null)
+            }
+          >
+            <option value="">All Resolution Times</option>
+            {RESOLUTION_TIME_BUCKETS.map((bucket) => (
+              <option key={bucket} value={bucket}>
+                {bucket}
+              </option>
+            ))}
           </select>
         </Field>
       </div>

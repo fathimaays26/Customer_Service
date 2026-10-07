@@ -6,6 +6,7 @@ import ChartCard from "../component/ChartCard";
 import { useFilters } from "../context/FilterContext";
 import { formatNumber } from "../format";
 import { loadDatabaseSnapshot } from "../dataService";
+import { matchesServiceCaseTimeBuckets } from "../timeBuckets";
 
 import type {
   DimCustomer,
@@ -152,7 +153,8 @@ export default function EnquiryProfile({
   activePage: DashboardPage;
   onPageChange: (page: DashboardPage) => void;
 }) {
-  const { filters, matchingModelIds, matchingCustomerIds } = useFilters();
+  const { filters, setFilter, matchingModelIds, matchingCustomerIds } =
+    useFilters();
 
   const [loading, setLoading] = useState(true);
 
@@ -238,6 +240,16 @@ export default function EnquiryProfile({
 
   const filteredCases = useMemo(() => {
     return serviceCases.filter((serviceCase) => {
+      if (
+        !matchesServiceCaseTimeBuckets(
+          serviceCase,
+          filters.pendingAgeBucket,
+          filters.resolutionTimeBucket,
+        )
+      ) {
+        return false;
+      }
+
       const vehicle = vehicleById.get(serviceCase.vehicle_id);
 
       const customer = customerById.get(serviceCase.customer_id);
@@ -833,6 +845,10 @@ export default function EnquiryProfile({
                                         0.08 + intensity * 0.62
                                       })`,
                                 color: intensity > 0.55 ? "#ffffff" : "#334155",
+                              }}
+                              onClick={() => {
+                                setFilter("category", category);
+                                setFilter("channel", channel);
                               }}
                               title={`${category} · ${channel}: ${formatNumber(
                                 value,

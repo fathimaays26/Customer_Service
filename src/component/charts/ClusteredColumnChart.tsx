@@ -18,6 +18,7 @@ interface ClusteredColumnChartProps {
   showLegend?: boolean;
   benchmark?: { value: number; label: string };
   unit?: string;
+  onCategoryClick?: (category: string) => void;
 }
 
 const DEFAULT_SERIES_COLORS = [
@@ -36,6 +37,7 @@ export default function ClusteredColumnChart({
   emptyMessage = "No data available",
   showLegend = true,
   benchmark,
+  onCategoryClick,
 }: ClusteredColumnChartProps) {
   const [hoveredIdx, setHoveredIdx] = useState<{
     catIdx: number;
@@ -84,10 +86,7 @@ export default function ClusteredColumnChart({
   }, [data, benchmark]);
 
   const totalRange = maxVal - minVal || 1;
-  const zeroLinePct =
-    minVal < 0
-      ? ((0 - minVal) / totalRange) * 100
-      : 0;
+  const zeroLinePct = minVal < 0 ? ((0 - minVal) / totalRange) * 100 : 0;
 
   if (data.length === 0) {
     return (
@@ -114,21 +113,14 @@ export default function ClusteredColumnChart({
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-2 text-xs">
           <div className="flex flex-wrap items-center gap-4">
             {seriesNames.map((name, i) => (
-              <div
-                key={name}
-                className="flex items-center gap-1.5"
-              >
+              <div key={name} className="flex items-center gap-1.5">
                 <span
                   className={`h-2.5 w-2.5 rounded-xs ${
-                    DEFAULT_SERIES_COLORS[
-                      i % DEFAULT_SERIES_COLORS.length
-                    ]
+                    DEFAULT_SERIES_COLORS[i % DEFAULT_SERIES_COLORS.length]
                   }`}
                 />
 
-                <span className="font-semibold text-slate-700">
-                  {name}
-                </span>
+                <span className="font-semibold text-slate-700">{name}</span>
               </div>
             ))}
           </div>
@@ -138,8 +130,7 @@ export default function ClusteredColumnChart({
               <span className="h-0.5 w-3 bg-rose-500" />
 
               <span className="text-[11px] font-semibold text-rose-700">
-                {benchmark.label} (
-                {valueFormatter(benchmark.value)})
+                {benchmark.label} ({valueFormatter(benchmark.value)})
               </span>
             </div>
           )}
@@ -147,15 +138,9 @@ export default function ClusteredColumnChart({
       )}
 
       {/* Chart + dedicated X-axis */}
-      <div
-        className="w-full"
-        style={{ height }}
-      >
+      <div className="w-full" style={{ height }}>
         {/* Plot area */}
-        <div
-          className="relative w-full"
-          style={{ height: plotHeight }}
-        >
+        <div className="relative w-full" style={{ height: plotHeight }}>
           {/* Background grid */}
           <div className="pointer-events-none absolute inset-0">
             {gridTicks.map((pct) => (
@@ -167,9 +152,7 @@ export default function ClusteredColumnChart({
                 }}
               >
                 <span className="absolute right-0 -top-2.5 pr-1 text-[10px] tabular-nums text-slate-400">
-                  {valueFormatter(
-                    minVal + pct * totalRange,
-                  )}
+                  {valueFormatter(minVal + pct * totalRange)}
                 </span>
               </div>
             ))}
@@ -180,11 +163,7 @@ export default function ClusteredColumnChart({
             <div
               className="pointer-events-none absolute left-0 right-0 z-10 border-t-2 border-dashed border-rose-500/80"
               style={{
-                bottom: `${
-                  ((benchmark.value - minVal) /
-                    totalRange) *
-                  100
-                }%`,
+                bottom: `${((benchmark.value - minVal) / totalRange) * 100}%`,
               }}
             />
           )}
@@ -214,31 +193,48 @@ export default function ClusteredColumnChart({
 
                     const isPositive = s.value >= 0;
 
-                    const barHeightPct =
-                      (Math.abs(s.value) /
-                        totalRange) *
-                      100;
+                    const barHeightPct = (Math.abs(s.value) / totalRange) * 100;
 
                     const color =
                       s.color ||
                       DEFAULT_SERIES_COLORS[
-                        serIdx %
-                          DEFAULT_SERIES_COLORS.length
+                        serIdx % DEFAULT_SERIES_COLORS.length
                       ];
 
                     return (
                       <div
                         key={s.name}
                         className="relative flex h-full max-w-[56px] flex-1 cursor-pointer flex-col items-center justify-end"
+                        onClick={
+                          onCategoryClick
+                            ? () => onCategoryClick(group.category)
+                            : undefined
+                        }
+                        onKeyDown={
+                          onCategoryClick
+                            ? (event) => {
+                                if (
+                                  event.key === "Enter" ||
+                                  event.key === " "
+                                ) {
+                                  event.preventDefault();
+                                  onCategoryClick(group.category);
+                                }
+                              }
+                            : undefined
+                        }
+                        role={onCategoryClick ? "button" : undefined}
+                        tabIndex={onCategoryClick ? 0 : undefined}
+                        aria-label={
+                          onCategoryClick ? group.category : undefined
+                        }
                         onMouseEnter={() =>
                           setHoveredIdx({
                             catIdx,
                             serIdx,
                           })
                         }
-                        onMouseLeave={() =>
-                          setHoveredIdx(null)
-                        }
+                        onMouseLeave={() => setHoveredIdx(null)}
                       >
                         {/* Value label */}
                         <span
@@ -248,10 +244,7 @@ export default function ClusteredColumnChart({
                               : "text-slate-700"
                           }`}
                           style={{
-                            bottom: `${Math.min(
-                              barHeightPct + 1.5,
-                              96,
-                            )}%`,
+                            bottom: `${Math.min(barHeightPct + 1.5, 96)}%`,
                           }}
                         >
                           {valueFormatter(s.value)}
@@ -265,10 +258,7 @@ export default function ClusteredColumnChart({
                               : "hover:brightness-105"
                           }`}
                           style={{
-                            height: `${Math.max(
-                              barHeightPct,
-                              1.5,
-                            )}%`,
+                            height: `${Math.max(barHeightPct, 1.5)}%`,
                             minHeight: "4px",
                             marginBottom:
                               minVal < 0 && isPositive
@@ -285,9 +275,7 @@ export default function ClusteredColumnChart({
                             </div>
 
                             <div className="mt-0.5 flex items-center gap-2">
-                              <span className="text-slate-400">
-                                {s.name}:
-                              </span>
+                              <span className="text-slate-400">{s.name}:</span>
 
                               <span className="font-bold text-white">
                                 {valueFormatter(s.value)}
@@ -307,10 +295,7 @@ export default function ClusteredColumnChart({
         {/* Dedicated X-axis labels */}
         <div className="flex h-7 items-start gap-2 px-2 sm:gap-4">
           {data.map((group) => (
-            <div
-              key={group.category}
-              className="min-w-0 flex-1 text-center"
-            >
+            <div key={group.category} className="min-w-0 flex-1 text-center">
               <span
                 className="block truncate px-1 text-[11px] font-semibold leading-5 text-slate-600"
                 title={group.category}

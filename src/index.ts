@@ -122,6 +122,8 @@ export interface GlobalFilters {
   priority: string | null;
   caseStatus: string | null;
   category: string | null;
+  pendingAgeBucket: string | null;
+  resolutionTimeBucket: string | null;
 }
 
 export const EMPTY_FILTERS: GlobalFilters = {
@@ -139,6 +141,8 @@ export const EMPTY_FILTERS: GlobalFilters = {
   priority: null,
   caseStatus: null,
   category: null,
+  pendingAgeBucket: null,
+  resolutionTimeBucket: null,
 };
 
 // ---- Overview KPI structure ----

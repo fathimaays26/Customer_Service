@@ -6,6 +6,7 @@ import type { DashboardPage } from "../component/Header";
 import { useFilters } from "../context/FilterContext";
 import { formatNumber } from "../format";
 import { loadDatabaseSnapshot } from "../dataService";
+import { matchesServiceCaseTimeBuckets } from "../timeBuckets";
 
 import type {
   DimCustomer,
@@ -102,9 +103,7 @@ type CategoryPriorityNode = {
   children: Map<string, CategoryPriorityNode>;
 };
 
-function getMonthLabel(
-  dateValue: string | null | undefined,
-) {
+function getMonthLabel(dateValue: string | null | undefined) {
   if (!dateValue) return "Unknown";
 
   const date = new Date(dateValue);
@@ -125,15 +124,10 @@ function buildCategoryPriorityHierarchy(
     csat: number;
   }>,
 ) {
-  const root = new Map<
-    string,
-    CategoryPriorityNode
-  >();
+  const root = new Map<string, CategoryPriorityNode>();
 
   for (const row of rows) {
-    let categoryNode = root.get(
-      row.category,
-    );
+    let categoryNode = root.get(row.category);
 
     if (!categoryNode) {
       categoryNode = {
@@ -149,10 +143,7 @@ function buildCategoryPriorityHierarchy(
     categoryNode.count += 1;
     categoryNode.csatSum += row.csat;
 
-    let priorityNode =
-      categoryNode.children.get(
-        row.priority,
-      );
+    let priorityNode = categoryNode.children.get(row.priority);
 
     if (!priorityNode) {
       priorityNode = {
@@ -162,10 +153,7 @@ function buildCategoryPriorityHierarchy(
         children: new Map(),
       };
 
-      categoryNode.children.set(
-        row.priority,
-        priorityNode,
-      );
+      categoryNode.children.set(row.priority, priorityNode);
     }
 
     priorityNode.count += 1;
@@ -182,50 +170,33 @@ export default function CustomerSatisfaction({
   activePage: DashboardPage;
   onPageChange: (page: DashboardPage) => void;
 }) {
-  const {
-    filters,
-    matchingModelIds,
-    matchingCustomerIds,
-  } = useFilters();
+  const { filters, matchingModelIds, matchingCustomerIds } = useFilters();
 
   const [loading, setLoading] = useState(true);
 
-  const [feedback, setFeedback] = useState<
-    FactCustomerFeedback[]
-  >([]);
+  const [feedback, setFeedback] = useState<FactCustomerFeedback[]>([]);
 
-  const [complaints, setComplaints] = useState<
-    FactComplaint[]
-  >([]);
+  const [complaints, setComplaints] = useState<FactComplaint[]>([]);
 
-  const [serviceCases, setServiceCases] =
-    useState<FactServiceCase[]>([]);
+  const [serviceCases, setServiceCases] = useState<FactServiceCase[]>([]);
 
-  const [vehicles, setVehicles] = useState<
-    DimVehicle[]
-  >([]);
+  const [vehicles, setVehicles] = useState<DimVehicle[]>([]);
 
-  const [models, setModels] = useState<
-    DimVModel[]
-  >([]);
+  const [models, setModels] = useState<DimVModel[]>([]);
 
-  const [customers, setCustomers] = useState<
-    DimCustomer[]
-  >([]);
+  const [customers, setCustomers] = useState<DimCustomer[]>([]);
 
-  const [categoryDrillPath, setCategoryDrillPath] =
-    useState<string[]>([]);
-  const [showComplaintDetails, setShowComplaintDetails] =
-    useState(false);
+  const [categoryDrillPath, setCategoryDrillPath] = useState<string[]>([]);
+  const [showComplaintDetails, setShowComplaintDetails] = useState(false);
 
-  const [tableCategoryFilter, setTableCategoryFilter] =
-    useState<string>("All");
-  const [tableTypeFilter, setTableTypeFilter] =
-    useState<string>("All");
-  const [complaintSortColumn, setComplaintSortColumn] =
-    useState<string | null>(null);
-  const [complaintSortDirection, setComplaintSortDirection] =
-    useState<"asc" | "desc">("asc");
+  const [tableCategoryFilter, setTableCategoryFilter] = useState<string>("All");
+  const [tableTypeFilter, setTableTypeFilter] = useState<string>("All");
+  const [complaintSortColumn, setComplaintSortColumn] = useState<string | null>(
+    null,
+  );
+  const [complaintSortDirection, setComplaintSortDirection] = useState<
+    "asc" | "desc"
+  >("asc");
 
   /*
    * ---------------------------------------------------------
@@ -238,20 +209,13 @@ export default function CustomerSatisfaction({
       setLoading(true);
 
       try {
-        const snapshot =
-          await loadDatabaseSnapshot();
+        const snapshot = await loadDatabaseSnapshot();
 
-        setFeedback(
-          snapshot.customerFeedback,
-        );
+        setFeedback(snapshot.customerFeedback);
 
-        setComplaints(
-          snapshot.complaints,
-        );
+        setComplaints(snapshot.complaints);
 
-        setServiceCases(
-          snapshot.serviceCases,
-        );
+        setServiceCases(snapshot.serviceCases);
 
         setVehicles(snapshot.vehicles);
         setModels(snapshot.models);
@@ -271,45 +235,25 @@ export default function CustomerSatisfaction({
    */
 
   const vehicleById = useMemo(
-    () =>
-      new Map(
-        vehicles.map((vehicle) => [
-          vehicle.vehicle_id,
-          vehicle,
-        ]),
-      ),
+    () => new Map(vehicles.map((vehicle) => [vehicle.vehicle_id, vehicle])),
     [vehicles],
   );
 
   const modelById = useMemo(
-    () =>
-      new Map(
-        models.map((model) => [
-          model.model_id,
-          model,
-        ]),
-      ),
+    () => new Map(models.map((model) => [model.model_id, model])),
     [models],
   );
 
   const customerById = useMemo(
     () =>
-      new Map(
-        customers.map((customer) => [
-          customer.customer_id,
-          customer,
-        ]),
-      ),
+      new Map(customers.map((customer) => [customer.customer_id, customer])),
     [customers],
   );
 
   const caseById = useMemo(
     () =>
       new Map(
-        serviceCases.map((serviceCase) => [
-          serviceCase.case_id,
-          serviceCase,
-        ]),
+        serviceCases.map((serviceCase) => [serviceCase.case_id, serviceCase]),
       ),
     [serviceCases],
   );
@@ -326,121 +270,80 @@ export default function CustomerSatisfaction({
 
   const filteredCases = useMemo(() => {
     return serviceCases.filter((serviceCase) => {
-      const vehicle = vehicleById.get(
-        serviceCase.vehicle_id,
-      );
-
-      const model = vehicle
-        ? modelById.get(vehicle.model_id)
-        : undefined;
-
-      const customer =
-        customerById.get(
-          serviceCase.customer_id,
-        );
-
       if (
-        filters.startDate &&
-        serviceCase.created_date <
-        filters.startDate
-      ) {
-        return false;
-      }
-
-      if (
-        filters.endDate &&
-        serviceCase.created_date >
-        filters.endDate
-      ) {
-        return false;
-      }
-
-      if (
-        filters.regionId &&
-        customer?.region_id !==
-        filters.regionId
-      ) {
-        return false;
-      }
-
-      if (
-        filters.modelId &&
-        vehicle?.model_id !==
-        filters.modelId
-      ) {
-        return false;
-      }
-
-      if (
-        matchingModelIds &&
-        !matchingModelIds.includes(
-          vehicle?.model_id ?? "",
+        !matchesServiceCaseTimeBuckets(
+          serviceCase,
+          filters.pendingAgeBucket,
+          filters.resolutionTimeBucket,
         )
       ) {
         return false;
       }
 
-      if (
-        filters.variant &&
-        model?.variant !== filters.variant
-      ) {
+      const vehicle = vehicleById.get(serviceCase.vehicle_id);
+
+      const model = vehicle ? modelById.get(vehicle.model_id) : undefined;
+
+      const customer = customerById.get(serviceCase.customer_id);
+
+      if (filters.startDate && serviceCase.created_date < filters.startDate) {
+        return false;
+      }
+
+      if (filters.endDate && serviceCase.created_date > filters.endDate) {
+        return false;
+      }
+
+      if (filters.regionId && customer?.region_id !== filters.regionId) {
+        return false;
+      }
+
+      if (filters.modelId && vehicle?.model_id !== filters.modelId) {
         return false;
       }
 
       if (
-        filters.vehicleType &&
-        model?.vehicle_type !==
-        filters.vehicleType
+        matchingModelIds &&
+        !matchingModelIds.includes(vehicle?.model_id ?? "")
       ) {
+        return false;
+      }
+
+      if (filters.variant && model?.variant !== filters.variant) {
+        return false;
+      }
+
+      if (filters.vehicleType && model?.vehicle_type !== filters.vehicleType) {
         return false;
       }
 
       if (
         filters.customerType &&
-        customer?.customer_type !==
-        filters.customerType
+        customer?.customer_type !== filters.customerType
       ) {
         return false;
       }
 
       if (
         matchingCustomerIds &&
-        !matchingCustomerIds.includes(
-          serviceCase.customer_id,
-        )
+        !matchingCustomerIds.includes(serviceCase.customer_id)
       ) {
         return false;
       }
 
-      if (
-        filters.category &&
-        serviceCase.category !==
-        filters.category
-      ) {
+      if (filters.category && serviceCase.category !== filters.category) {
         return false;
       }
 
-      if (
-        filters.channel &&
-        serviceCase.channel !==
-        filters.channel
-      ) {
+      if (filters.channel && serviceCase.channel !== filters.channel) {
         return false;
       }
 
-      if (
-        filters.priority &&
-        serviceCase.priority !==
-        filters.priority
-      ) {
+      if (filters.priority && serviceCase.priority !== filters.priority) {
         return false;
       }
 
-      if (
-        filters.caseStatus &&
-        serviceCase.status !==
-        filters.caseStatus
-      ) {
+      if (filters.caseStatus && serviceCase.status !== filters.caseStatus) {
         return false;
       }
 
@@ -464,43 +367,25 @@ export default function CustomerSatisfaction({
 
   const filteredFeedback = useMemo(() => {
     const allowedCaseIds = new Set(
-      filteredCases.map(
-        (serviceCase) =>
-          serviceCase.case_id,
-      ),
+      filteredCases.map((serviceCase) => serviceCase.case_id),
     );
 
     return feedback.filter((item) => {
-      if (
-        !allowedCaseIds.has(item.case_id)
-      ) {
+      if (!allowedCaseIds.has(item.case_id)) {
         return false;
       }
 
-      if (
-        filters.startDate &&
-        item.feedback_date <
-        filters.startDate
-      ) {
+      if (filters.startDate && item.feedback_date < filters.startDate) {
         return false;
       }
 
-      if (
-        filters.endDate &&
-        item.feedback_date >
-        filters.endDate
-      ) {
+      if (filters.endDate && item.feedback_date > filters.endDate) {
         return false;
       }
 
       return true;
     });
-  }, [
-    feedback,
-    filteredCases,
-    filters.startDate,
-    filters.endDate,
-  ]);
+  }, [feedback, filteredCases, filters.startDate, filters.endDate]);
 
   /*
    * ---------------------------------------------------------
@@ -510,45 +395,25 @@ export default function CustomerSatisfaction({
 
   const filteredComplaints = useMemo(() => {
     const allowedCaseIds = new Set(
-      filteredCases.map(
-        (serviceCase) =>
-          serviceCase.case_id,
-      ),
+      filteredCases.map((serviceCase) => serviceCase.case_id),
     );
 
     return complaints.filter((complaint) => {
-      if (
-        !allowedCaseIds.has(
-          complaint.case_id,
-        )
-      ) {
+      if (!allowedCaseIds.has(complaint.case_id)) {
         return false;
       }
 
-      if (
-        filters.startDate &&
-        complaint.complaint_date <
-        filters.startDate
-      ) {
+      if (filters.startDate && complaint.complaint_date < filters.startDate) {
         return false;
       }
 
-      if (
-        filters.endDate &&
-        complaint.complaint_date >
-        filters.endDate
-      ) {
+      if (filters.endDate && complaint.complaint_date > filters.endDate) {
         return false;
       }
 
       return true;
     });
-  }, [
-    complaints,
-    filteredCases,
-    filters.startDate,
-    filters.endDate,
-  ]);
+  }, [complaints, filteredCases, filters.startDate, filters.endDate]);
 
   /*
    * ---------------------------------------------------------
@@ -562,10 +427,8 @@ export default function CustomerSatisfaction({
 
   const averageCSAT =
     feedbackScores.length > 0
-      ? feedbackScores.reduce(
-        (sum, score) => sum + score,
-        0,
-      ) / feedbackScores.length
+      ? feedbackScores.reduce((sum, score) => sum + score, 0) /
+        feedbackScores.length
       : 0;
 
   /*
@@ -576,34 +439,22 @@ export default function CustomerSatisfaction({
    * not invent a classification threshold.
    */
 
-  const positiveFeedback =
-    filteredFeedback.filter(
-      (item) =>
-        String(
-          item.feedback_type ?? "",
-        ).toLowerCase() === "positive",
-    ).length;
+  const positiveFeedback = filteredFeedback.filter(
+    (item) => String(item.feedback_type ?? "").toLowerCase() === "positive",
+  ).length;
 
-  const negativeFeedback =
-    filteredFeedback.filter(
-      (item) =>
-        String(
-          item.feedback_type ?? "",
-        ).toLowerCase() === "negative",
-    ).length;
+  const negativeFeedback = filteredFeedback.filter(
+    (item) => String(item.feedback_type ?? "").toLowerCase() === "negative",
+  ).length;
 
   const positiveFeedbackRate =
     filteredFeedback.length > 0
-      ? (positiveFeedback /
-        filteredFeedback.length) *
-      100
+      ? (positiveFeedback / filteredFeedback.length) * 100
       : 0;
 
   const negativeFeedbackRate =
     filteredFeedback.length > 0
-      ? (negativeFeedback /
-        filteredFeedback.length) *
-      100
+      ? (negativeFeedback / filteredFeedback.length) * 100
       : 0;
 
   /*
@@ -629,9 +480,7 @@ export default function CustomerSatisfaction({
     }
 
     for (const item of filteredFeedback) {
-      const month = getMonthLabel(
-        item.feedback_date,
-      );
+      const month = getMonthLabel(item.feedback_date);
 
       const row = monthly.get(month);
 
@@ -654,15 +503,10 @@ export default function CustomerSatisfaction({
           name: "Average CSAT",
           color: "#2563eb",
           data: MONTH_ORDER.map((month) => {
-            const row =
-              monthly.get(month);
+            const row = monthly.get(month);
 
             return row && row.count > 0
-              ? Number(
-                (
-                  row.total / row.count
-                ).toFixed(2),
-              )
+              ? Number((row.total / row.count).toFixed(2))
               : 0;
           }),
         },
@@ -676,50 +520,38 @@ export default function CustomerSatisfaction({
    * ---------------------------------------------------------
    */
 
-  const categoryPriorityRows =
-    useMemo(() => {
-      const rows: Array<{
-        category: string;
-        priority: string;
-        csat: number;
-      }> = [];
+  const categoryPriorityRows = useMemo(() => {
+    const rows: Array<{
+      category: string;
+      priority: string;
+      csat: number;
+    }> = [];
 
-      for (const feedbackItem of filteredFeedback) {
-        const serviceCase =
-          caseById.get(
-            feedbackItem.case_id,
-          );
+    for (const feedbackItem of filteredFeedback) {
+      const serviceCase = caseById.get(feedbackItem.case_id);
 
-        if (!serviceCase) continue;
+      if (!serviceCase) continue;
 
-        const score = getCsatScore(feedbackItem);
+      const score = getCsatScore(feedbackItem);
 
-        if (score === null) {
-          continue;
-        }
-
-        rows.push({
-          category:
-            serviceCase.category ||
-            "Unknown Category",
-          priority:
-            serviceCase.priority ||
-            "Unknown Priority",
-          csat: score,
-        });
+      if (score === null) {
+        continue;
       }
 
-      return rows;
-    }, [filteredFeedback, caseById]);
+      rows.push({
+        category: serviceCase.category || "Unknown Category",
+        priority: serviceCase.priority || "Unknown Priority",
+        csat: score,
+      });
+    }
 
-  const categoryPriorityHierarchy =
-    useMemo(
-      () =>
-        buildCategoryPriorityHierarchy(
-          categoryPriorityRows,
-        ),
-      [categoryPriorityRows],
-    );
+    return rows;
+  }, [filteredFeedback, caseById]);
+
+  const categoryPriorityHierarchy = useMemo(
+    () => buildCategoryPriorityHierarchy(categoryPriorityRows),
+    [categoryPriorityRows],
+  );
 
   const categoryCSATData = useMemo(() => {
     const categoryMap = new Map<
@@ -731,36 +563,23 @@ export default function CustomerSatisfaction({
     >();
 
     for (const row of categoryPriorityRows) {
-      const current =
-        categoryMap.get(row.category) ?? {
-          total: 0,
-          count: 0,
-        };
+      const current = categoryMap.get(row.category) ?? {
+        total: 0,
+        count: 0,
+      };
 
       current.total += row.csat;
       current.count += 1;
 
-      categoryMap.set(
-        row.category,
-        current,
-      );
+      categoryMap.set(row.category, current);
     }
 
     return [...categoryMap.entries()]
       .map(([label, stats]) => ({
         label,
         value:
-          stats.count > 0
-            ? Number(
-              (
-                stats.total /
-                stats.count
-              ).toFixed(2),
-            )
-            : 0,
-        secondaryLabel: `${formatNumber(
-          stats.count,
-        )} responses`,
+          stats.count > 0 ? Number((stats.total / stats.count).toFixed(2)) : 0,
+        secondaryLabel: `${formatNumber(stats.count)} responses`,
         color: "bg-blue-600",
       }))
       .sort((a, b) => b.value - a.value);
@@ -863,10 +682,8 @@ export default function CustomerSatisfaction({
           comparison = a.case_id.localeCompare(b.case_id);
           break;
         case "customer": {
-          const custA =
-            customerById.get(a.customer_id)?.customer_name || "";
-          const custB =
-            customerById.get(b.customer_id)?.customer_name || "";
+          const custA = customerById.get(a.customer_id)?.customer_name || "";
+          const custB = customerById.get(b.customer_id)?.customer_name || "";
           comparison = custA.localeCompare(custB);
           break;
         }
@@ -889,9 +706,7 @@ export default function CustomerSatisfaction({
         default:
           comparison = 0;
       }
-      return complaintSortDirection === "asc"
-        ? comparison
-        : -comparison;
+      return complaintSortDirection === "asc" ? comparison : -comparison;
     });
   }, [
     filteredComplaints,
@@ -905,10 +720,7 @@ export default function CustomerSatisfaction({
 
   if (showComplaintDetails) {
     return (
-      <DashboardLayout
-        activePage={activePage}
-        onPageChange={onPageChange}
-      >
+      <DashboardLayout activePage={activePage} onPageChange={onPageChange}>
         <div className="mb-5 flex items-center justify-between">
           <div>
             <div className="flex items-center gap-2">
@@ -948,7 +760,9 @@ export default function CustomerSatisfaction({
                     <span className="inline-flex items-center gap-1">
                       Complaint ID
                       {complaintSortColumn === "complaint_id" && (
-                        <span>{complaintSortDirection === "asc" ? "↑" : "↓"}</span>
+                        <span>
+                          {complaintSortDirection === "asc" ? "↑" : "↓"}
+                        </span>
                       )}
                     </span>
                   </th>
@@ -960,7 +774,9 @@ export default function CustomerSatisfaction({
                     <span className="inline-flex items-center gap-1">
                       Case ID
                       {complaintSortColumn === "case_id" && (
-                        <span>{complaintSortDirection === "asc" ? "↑" : "↓"}</span>
+                        <span>
+                          {complaintSortDirection === "asc" ? "↑" : "↓"}
+                        </span>
                       )}
                     </span>
                   </th>
@@ -972,7 +788,9 @@ export default function CustomerSatisfaction({
                     <span className="inline-flex items-center gap-1">
                       Customer
                       {complaintSortColumn === "customer" && (
-                        <span>{complaintSortDirection === "asc" ? "↑" : "↓"}</span>
+                        <span>
+                          {complaintSortDirection === "asc" ? "↑" : "↓"}
+                        </span>
                       )}
                     </span>
                   </th>
@@ -988,7 +806,9 @@ export default function CustomerSatisfaction({
                       >
                         <span>Category</span>
                         {complaintSortColumn === "category" && (
-                          <span>{complaintSortDirection === "asc" ? "↑" : "↓"}</span>
+                          <span>
+                            {complaintSortDirection === "asc" ? "↑" : "↓"}
+                          </span>
                         )}
                       </button>
                       <div className="relative inline-flex items-center">
@@ -1001,7 +821,9 @@ export default function CustomerSatisfaction({
                           className="cursor-pointer appearance-none rounded border border-slate-300 bg-white py-0.5 pl-1.5 pr-4 text-[10px] font-medium text-slate-700 shadow-2xs hover:border-blue-400 focus:border-blue-500 focus:outline-none"
                         >
                           <option value="All">All</option>
-                          <option value="Service Request">Service Request</option>
+                          <option value="Service Request">
+                            Service Request
+                          </option>
                           <option value="Vehicle Issue">Vehicle Issue</option>
                           <option value="Warranty Query">Warranty Query</option>
                         </select>
@@ -1027,16 +849,16 @@ export default function CustomerSatisfaction({
                       >
                         <span>Complaint Type</span>
                         {complaintSortColumn === "complaint_type" && (
-                          <span>{complaintSortDirection === "asc" ? "↑" : "↓"}</span>
+                          <span>
+                            {complaintSortDirection === "asc" ? "↑" : "↓"}
+                          </span>
                         )}
                       </button>
                       <div className="relative inline-flex items-center">
                         <select
                           value={tableTypeFilter}
                           aria-label="Filter Complaint Type"
-                          onChange={(e) =>
-                            setTableTypeFilter(e.target.value)
-                          }
+                          onChange={(e) => setTableTypeFilter(e.target.value)}
                           className="cursor-pointer appearance-none rounded border border-slate-300 bg-white py-0.5 pl-1.5 pr-4 text-[10px] font-medium text-slate-700 shadow-2xs hover:border-blue-400 focus:border-blue-500 focus:outline-none"
                         >
                           <option value="All">All</option>
@@ -1064,7 +886,9 @@ export default function CustomerSatisfaction({
                     <span className="inline-flex items-center gap-1">
                       Complaint Date
                       {complaintSortColumn === "complaint_date" ? (
-                        <span>{complaintSortDirection === "asc" ? "↑" : "↓"}</span>
+                        <span>
+                          {complaintSortDirection === "asc" ? "↑" : "↓"}
+                        </span>
                       ) : (
                         <span className="text-slate-400">↓</span>
                       )}
@@ -1075,8 +899,7 @@ export default function CustomerSatisfaction({
 
               <tbody>
                 {displayedComplaints.map((complaint) => {
-                  const customer =
-                    customerById.get(complaint.customer_id);
+                  const customer = customerById.get(complaint.customer_id);
                   const serviceCase = caseById.get(complaint.case_id);
                   const category = serviceCase?.category || "Unknown";
 
@@ -1094,8 +917,7 @@ export default function CustomerSatisfaction({
                       </td>
 
                       <td className="px-4 py-3 text-slate-700">
-                        {customer?.customer_name ??
-                          complaint.customer_id}
+                        {customer?.customer_name ?? complaint.customer_id}
                       </td>
 
                       <td className="px-4 py-3 text-slate-700 font-medium">
@@ -1138,18 +960,14 @@ export default function CustomerSatisfaction({
    */
 
   return (
-    <DashboardLayout
-      activePage={activePage}
-      onPageChange={onPageChange}
-    >
+    <DashboardLayout activePage={activePage} onPageChange={onPageChange}>
       {/* Header */}
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200/90 bg-white p-5 shadow-xs">
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-xl font-bold tracking-tight text-slate-900">
-              Customer Satisfaction &amp;
-              Complaints
+              Customer Satisfaction &amp; Complaints
             </h1>
 
             <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
@@ -1158,8 +976,8 @@ export default function CustomerSatisfaction({
           </div>
 
           <p className="mt-1 text-xs text-slate-500">
-            Understand customer satisfaction,
-            feedback patterns, and complaint drivers.
+            Understand customer satisfaction, feedback patterns, and complaint
+            drivers.
           </p>
         </div>
       </div>
@@ -1171,14 +989,8 @@ export default function CustomerSatisfaction({
       <div className="mb-6 grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5">
         <KPICard
           title="Average CSAT Score"
-          value={
-            averageCSAT > 0
-              ? averageCSAT.toFixed(2)
-              : "—"
-          }
-          subtext={`${formatNumber(
-            feedbackScores.length,
-          )} responses`}
+          value={averageCSAT > 0 ? averageCSAT.toFixed(2) : "—"}
+          subtext={`${formatNumber(feedbackScores.length)} responses`}
           tooltip="Average customer satisfaction score across feedback responses"
           accentColor="blue"
           loading={loading}
@@ -1186,9 +998,7 @@ export default function CustomerSatisfaction({
 
         <KPICard
           title="Feedback Response Count"
-          value={formatNumber(
-            filteredFeedback.length,
-          )}
+          value={formatNumber(filteredFeedback.length)}
           subtext="Customer feedback responses"
           tooltip="Total customer feedback responses matching current filters"
           accentColor="indigo"
@@ -1197,12 +1007,8 @@ export default function CustomerSatisfaction({
 
         <KPICard
           title="Positive Feedback"
-          value={`${positiveFeedbackRate.toFixed(
-            1,
-          )}%`}
-          subtext={`${formatNumber(
-            positiveFeedback,
-          )} positive responses`}
+          value={`${positiveFeedbackRate.toFixed(1)}%`}
+          subtext={`${formatNumber(positiveFeedback)} positive responses`}
           tooltip="Positive feedback responses as a percentage of total feedback responses"
           accentColor="emerald"
           loading={loading}
@@ -1210,12 +1016,8 @@ export default function CustomerSatisfaction({
 
         <KPICard
           title="Negative Feedback"
-          value={`${negativeFeedbackRate.toFixed(
-            1,
-          )}%`}
-          subtext={`${formatNumber(
-            negativeFeedback,
-          )} negative responses`}
+          value={`${negativeFeedbackRate.toFixed(1)}%`}
+          subtext={`${formatNumber(negativeFeedback)} negative responses`}
           tooltip="Negative feedback responses as a percentage of total feedback responses"
           accentColor="rose"
           loading={loading}
@@ -1223,9 +1025,7 @@ export default function CustomerSatisfaction({
 
         <KPICard
           title="Total Complaints"
-          value={formatNumber(
-            filteredComplaints.length,
-          )}
+          value={formatNumber(filteredComplaints.length)}
           subtext="Recorded complaints"
           tooltip="Total complaints matching current filters"
           accentColor="amber"
@@ -1248,9 +1048,7 @@ export default function CustomerSatisfaction({
           <MultiLineTrendChart
             labels={csatTrendData.labels}
             series={csatTrendData.series}
-            valueFormatter={(value) =>
-              value.toFixed(2)
-            }
+            valueFormatter={(value) => value.toFixed(2)}
             height={240}
           />
         </ChartCard>
@@ -1328,10 +1126,7 @@ export default function CustomerSatisfaction({
                       <div
                         className="h-full rounded-md bg-blue-600 transition-all group-hover:bg-blue-700"
                         style={{
-                          width: `${Math.min(
-                            100,
-                            (row.value / 5) * 100,
-                          )}%`,
+                          width: `${Math.min(100, (row.value / 5) * 100)}%`,
                         }}
                       />
                     </div>
@@ -1362,27 +1157,20 @@ export default function CustomerSatisfaction({
                     );
                   }
 
-                  const priorityNodes = [
-                    ...node.children.values(),
-                  ].sort((a, b) => {
-                    const avgA =
-                      a.count > 0 ? a.csatSum / a.count : 0;
-                    const avgB =
-                      b.count > 0 ? b.csatSum / b.count : 0;
-                    return avgB - avgA;
-                  });
+                  const priorityNodes = [...node.children.values()].sort(
+                    (a, b) => {
+                      const avgA = a.count > 0 ? a.csatSum / a.count : 0;
+                      const avgB = b.count > 0 ? b.csatSum / b.count : 0;
+                      return avgB - avgA;
+                    },
+                  );
 
                   return priorityNodes.map((pNode) => {
                     const avg =
-                      pNode.count > 0
-                        ? pNode.csatSum / pNode.count
-                        : 0;
+                      pNode.count > 0 ? pNode.csatSum / pNode.count : 0;
 
                     return (
-                      <div
-                        key={pNode.label}
-                        className="group"
-                      >
+                      <div key={pNode.label} className="group">
                         <div className="mb-1 flex items-center justify-between text-xs">
                           <span className="font-semibold text-slate-700">
                             {pNode.label} Priority
@@ -1390,8 +1178,7 @@ export default function CustomerSatisfaction({
 
                           <span className="flex items-center gap-2 font-semibold text-slate-600">
                             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">
-                              {formatNumber(pNode.count)}{" "}
-                              responses
+                              {formatNumber(pNode.count)} responses
                             </span>
                             <span>{avg.toFixed(2)}</span>
                           </span>
@@ -1401,10 +1188,7 @@ export default function CustomerSatisfaction({
                           <div
                             className="h-full rounded-md bg-blue-600"
                             style={{
-                              width: `${Math.min(
-                                100,
-                                (avg / 5) * 100,
-                              )}%`,
+                              width: `${Math.min(100, (avg / 5) * 100)}%`,
                             }}
                           />
                         </div>
@@ -1459,7 +1243,6 @@ export default function CustomerSatisfaction({
           </div>
         </ChartCard>
       </div>
-
-</DashboardLayout>
+    </DashboardLayout>
   );
 }
